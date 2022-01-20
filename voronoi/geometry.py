@@ -10,12 +10,30 @@ import pyvoronoi
 
 Vertex = Tuple[float, float]
 
+# Number of tries before we give up trying to find a best-fit arc and just go
+# with the best we have found so far.
 ITERATION_COUNT = 50
+
+# Resolution of vorinoi algorithm.
+# See C++ Boost documentation.
 VORONOI_RES = 1000
-#BREADTH_FIRST = True
-BREADTH_FIRST = False
-CURVE_STEP_LEN = 0.5
+
+# Whether to visit short voronoi edges first (True) or try to execute longer 
+# branches first.
+# TODO: We could use more long range path planning that take the shortest total
+# path into account.
+BREADTH_FIRST = True
+#BREADTH_FIRST = False
+
+# Number of decimal places resolution for coordinates.
 ROUND_DP = 4
+
+# When arc sizes drop below a certain point, we need to reduce the step size or
+# forward motion due to the distance between arcs (step) becomes more than the
+# arc diameter.
+# This constant is the minimum arc radius size at which we start reducing step size.
+# Expressed as a multiple of the step size.
+CORNER_ZOOM = 3
 
 
 def timing(func):
@@ -223,7 +241,12 @@ class ToolPath:
     def _chose_path(self, start_vertex) -> Tuple[Tuple[float, float], int]:
         """
         Chose a path onwards from start_vertex.
-        Try to pick the longest option without branches.
+
+        globals:
+            BREADTH_FIRST = True:
+                Try to pick the shortest option without branches.
+            BREADTH_FIRST = False:
+                Try to pick the longest option without branches.
 
         Returns:
             Index of the edge onwards form start_vertex.
@@ -279,6 +302,10 @@ class ToolPath:
 
     @classmethod
     def _extrapolate_line(cls, extra: float, line: LineString) -> LineString:
+        """
+        Extend a line at both ends in the same direction as the end coordinate
+        pair implies.
+        """
         coord_0, coord_1 = line.coords[:2]
         coord_m2, coord_m1 = line.coords[-2:]
         ratio_begin = extra / LineString([coord_0, coord_1]).length
@@ -294,6 +321,22 @@ class ToolPath:
     @classmethod
     def _pid(cls, kp: float, ki: float, kd: float, seed: float
             ) -> Generator[float, Tuple[float, float], None]:
+        """
+        A PID algorithm used for recursively estimating the position of the best
+        fit arc.
+
+        Arguments:
+            kp: Propotional multiplier.
+            ki: Integral multiplier.
+            kd: Derivative multiplier.
+        Yields:
+            Arguments:
+                target: Target step size.
+                current: step size resulting from the previous iteration result.
+            next distance 
+        Returns:
+            Never exits Yield loop.
+        """
         error_previous: float = 0.0
         integral: float = 0.0
         value: float = seed
@@ -313,13 +356,34 @@ class ToolPath:
             error_previous = error
 
     def _arc_at_distance(self, distance: float, voronoi_edge: LineString) -> Tuple[Point, float]:
-            pos = voronoi_edge.interpolate(distance)
-            radius = self._distance_from_geom(pos)
-            
-            return (pos, radius)
+        """
+        Calculate the center point and radius of the largest arc that fits at a
+        set distance along a voronoi edge.
+        """
+        pos = voronoi_edge.interpolate(distance)
+        radius = self._distance_from_geom(pos)
+        
+        return (pos, radius)
 
     @classmethod
     def _furthest_spacing(cls, a: Union[LineString, MultiLineString], b: LineString) -> float:
+        """
+        Calculate maximum step_over between 2 arcs.
+
+        TODO: Current implementation is expensive. Not sure how shapely's distance
+        method works but it is likely "O(N)", making this implementation N^2.
+        We can likely reduce that to O(N*log(N)) with a binary search.
+        If these were complete circles there is a mathematical solution:
+        The largest gap is co-linear with the line going through both arc's
+        origins. I think we can use that for an O(1) solution.
+
+        Arguments:
+            a: The new arc. Can be split into multiple sections.
+            b: The previous arc. A simple arc.
+
+        Returns:
+            The step distance.
+        """
         a_normal = a
         # Merge lines if we can but ultimately use MultiLineString so we
         # deal with a single type.
@@ -336,6 +400,9 @@ class ToolPath:
             #spacing = max(spacing, start.distance(b))
             #spacing = max(spacing, mid.distance(b))
             #spacing = max(spacing, end.distance(b))
+
+            # This is expensive but yeilds good results.
+            # Probably want to do a binary search version?
             for index in range(0, len(section.coords), 2):
                 coord = section.coords[index]
                 spacing = max(spacing, Point(coord).distance(b))
@@ -394,11 +461,16 @@ class ToolPath:
         best_progress: float = 0.0
         best_distance: float = 0.0
         dist_offset: int = 100000
+
+        # Extrapolate line beyond it's actual distance to give the PID algorithm
+        # room to overshoot while converging on an optimal position for the new arc.
         edge_extended: LineString = self._extrapolate_line(dist_offset, voronoi_edge)
-        #edge_extended = voronoi_edge
         assert abs(edge_extended.length - (voronoi_edge.length + 2 * dist_offset)) < 0.0001
 
         log = f"\t{voronoi_edge.length=} {edge_extended.length=}\n"
+
+        # Loop multiple times, trying to converge on a distance along the vorinoi
+        # edge that provides the correct step size.
         while count < ITERATION_COUNT:
             count += 1
 
@@ -429,22 +501,27 @@ class ToolPath:
             # Progress is measured as the furthest point he proposed arc is
             # from the previous one. We are aiming for proposed == step.
             progress = self._furthest_spacing(arc_section, self.last_circle.boundary)
-            if (abs(step - progress) < abs(step - best_progress) and
+            desired_step = step
+            if radius < step * CORNER_ZOOM:
+                # Limit step size as the arc radius gets very small.
+                desired_step *= max(step / 10, (radius + 1 - step) / CORNER_ZOOM)
+
+            if (abs(desired_step - progress) < abs(desired_step - best_progress) and
                     distance > 0 and best_distance <= voronoi_edge.length):
                 best_progress = progress
                 best_distance = distance
 
-            if abs(step - progress) < step / 20:
+            if abs(desired_step - progress) < desired_step / 20:
                 # Good enough fit.
                 color = "green"
                 break
 
-            if abs(best_distance - voronoi_edge.length) < step / 20 and progress < self.step:
+            if abs(best_distance - voronoi_edge.length) < desired_step / 20 and progress < desired_step:
                 # Have reached end of voronoi edge. Pointless going further.
                 color = "green"
                 break
 
-            modifier = pid.send((step, progress))
+            modifier = pid.send((desired_step, progress))
             distance += modifier
 
             #log += f"\t{progress=}\t{best_progress=}\t{modifier=}\n"
@@ -488,7 +565,7 @@ class ToolPath:
         if count == ITERATION_COUNT:
             self.fail_count += 1
             print("\tDid not find an arc that fits. Spacing/Desired: "
-                    f"{round(progress, 3)}/{step}")
+                    f"{round(progress, 3)}/{desired_step}")
 
         if count == ITERATION_COUNT or debug:
             print(log)
@@ -498,7 +575,7 @@ class ToolPath:
         self.last_circle = circle
         self.cut_area_total = self.cut_area_total.union(circle)
 
-        if final_run and progress > step * 0.9:
+        if final_run and progress > desired_step * 0.9:
             # Close enough to end.
             distance = voronoi_edge.length
 
@@ -558,6 +635,10 @@ class ToolPath:
         return (line, traversed_edges)
 
     def _walk(self) -> None:
+        """
+        Iterate through vorinoi edges.
+        For each edge, calculate arc positions along the edge.
+        """
         start_vertex = (self.start.x, self.start.y)
         start_vertex, edge_i = self._chose_path(start_vertex)
 
