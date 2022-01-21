@@ -461,6 +461,7 @@ class ToolPath:
         best_progress: float = 0.0
         best_distance: float = 0.0
         dist_offset: int = 100000
+        desired_step = step
         log = ""
 
         # Extrapolate line beyond it's actual distance to give the PID algorithm
@@ -550,11 +551,12 @@ class ToolPath:
             arc_section = arc.difference(self.last_circle)
 
         assert arc_section is not None
-        if arc_section.type != "MultiLineString":
-            arc_section = MultiLineString([arc_section])
-        for section in arc_section.geoms:
-            x, y = section.xy
-            plt.plot(x, y, c=color, linewidth=1)
+        if arc_section:
+            if arc_section.type != "MultiLineString":
+                arc_section = MultiLineString([arc_section])
+            for section in arc_section.geoms:
+                x, y = section.xy
+                plt.plot(x, y, c=color, linewidth=1)
 
         if count == ITERATION_COUNT:
             self.fail_count += 1
