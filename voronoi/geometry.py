@@ -218,9 +218,9 @@ class Voronoi:
 class ToolPath:
     @timing
     def __init__(self, polygon: Polygon) -> None:
-        self.polygon = polygon
-        self.step = 1
-        self.remainder = 0
+        self.polygon: Polygon = polygon
+        self.step: float = 1.0
+        self.remainder: float = 0.0
         self.last_radius = None
         self.max_dist = max((self.polygon.bounds[2] - self.polygon.bounds[0]),
                 (self.polygon.bounds[3] - self.polygon.bounds[1])) + 1
@@ -228,8 +228,8 @@ class ToolPath:
         self.start: Point = self.voronoi.widest_gap()
         self.cut_area_total = Polygon()
         self.last_circle = Polygon()
-        self.fail_count = 0
-        self.loop_count = 0
+        self.fail_count: int = 0
+        self.loop_count: int = 0
 
         self.visited_edges: Set[int] = set()
         start_vertex = (self.start.x, self.start.y)
@@ -461,13 +461,12 @@ class ToolPath:
         best_progress: float = 0.0
         best_distance: float = 0.0
         dist_offset: int = 100000
+        log = ""
 
         # Extrapolate line beyond it's actual distance to give the PID algorithm
         # room to overshoot while converging on an optimal position for the new arc.
         edge_extended: LineString = self._extrapolate_line(dist_offset, voronoi_edge)
         assert abs(edge_extended.length - (voronoi_edge.length + 2 * dist_offset)) < 0.0001
-
-        log = f"\t{voronoi_edge.length=} {edge_extended.length=}\n"
 
         # Loop multiple times, trying to converge on a distance along the vorinoi
         # edge that provides the correct step size.
@@ -484,19 +483,18 @@ class ToolPath:
             circle = Point(pos).buffer(radius)
             arc = circle.boundary
 
-            if not self.last_circle:
-                # The very first circle in the whole path.
-                # No calculation required. Just draw it.
-                break
-
             # Compare proposed arc to cut area.
             # We are only interested in sections that have not been cut yet.
             arc_section = arc.difference(self.cut_area_total)
             if not arc_section:
                 # arc is entirely hidden by previous cut geometry.
                 # Nothing more to do here.
-                color = "orange"
                 return distance
+
+            if not self.last_circle:
+                # The very first circle in the whole path.
+                # No calculation required. Just draw it.
+                break
 
             # Progress is measured as the furthest point he proposed arc is
             # from the previous one. We are aiming for proposed == step.
@@ -544,28 +542,27 @@ class ToolPath:
             pos, radius = self._arc_at_distance(distance + dist_offset, edge_extended)
             circle = Point(pos).buffer(radius)
             arc = circle.boundary
-
-        # Recalculate arc_section with cut path masked out.
-        assert arc is not None
-        if debug:
-            arc_section = arc.difference(self.last_circle)
-        else:
             arc_section = arc.difference(self.cut_area_total)
 
+        if debug:
+            # Recalculate view of arc_section without cut path masked out.
+            assert arc is not None
+            arc_section = arc.difference(self.last_circle)
+
         assert arc_section is not None
-        if arc_section.type == "MultiLineString":
-            arc_section = linemerge(arc_section)
-        if arc_section:
-            if arc_section.type != "MultiLineString":
-                arc_section = MultiLineString([arc_section])
-            for section in arc_section.geoms:
-                x, y = section.xy
-                plt.plot(x, y, c=color, linewidth=1)
+        if arc_section.type != "MultiLineString":
+            arc_section = MultiLineString([arc_section])
+        for section in arc_section.geoms:
+            x, y = section.xy
+            plt.plot(x, y, c=color, linewidth=1)
 
         if count == ITERATION_COUNT:
             self.fail_count += 1
+            distance_remain = voronoi_edge.length - distance
             print("\tDid not find an arc that fits. Spacing/Desired: "
-                    f"{round(progress, 3)}/{desired_step}")
+                    f"{round(progress, 3)}/{desired_step}"
+                    "\tdistance remaining: "
+                    f"{round(distance_remain, 3)}")
 
         if count == ITERATION_COUNT or debug:
             print(log)
@@ -651,8 +648,8 @@ class ToolPath:
             stuck_count = int(combined_edge.length * 20 / self.step + 10)
             while dist < combined_edge.length and stuck_count:
                 stuck_count -= 1
-                dist = self._calculate_arc(
-                        combined_edge, dist, debug=(edge_i in []))
+                debug = edge_i in []
+                dist = self._calculate_arc(combined_edge, dist, debug=debug)
 
             if stuck_count <= 0:
                 print(f"stuck: {round(dist, 2)} / {round(combined_edge.length, 2)}")
