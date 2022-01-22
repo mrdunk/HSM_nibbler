@@ -34,7 +34,8 @@ ROUND_DP = 4
 # arc diameter.
 # This constant is the minimum arc radius size at which we start reducing step size.
 # Expressed as a multiple of the step size.
-CORNER_ZOOM = 3
+CORNER_ZOOM = 4
+CORNER_ZOOM_EFFECT = 2
 
 
 def timing(func):
@@ -186,7 +187,7 @@ class Voronoi:
                             self._store_edge(line)
                         continue
 
-        self._drop_irrelevant_edges()
+        #self._drop_irrelevant_edges()
 
     def _store_edge(self, edge: LineString) -> None:
         index_a = (edge.coords[0][0], edge.coords[0][1])
@@ -266,7 +267,7 @@ class ToolPath:
     @timing
     def __init__(self, polygon: Polygon) -> None:
         self.polygon: Polygon = polygon
-        self.step: float = 1.0
+        self.step: float = 3
         self.remainder: float = 0.0
         self.last_radius = None
         self.max_dist = max((self.polygon.bounds[2] - self.polygon.bounds[0]),
@@ -343,8 +344,7 @@ class ToolPath:
         for ring in [self.polygon.exterior] + list(self.polygon.interiors):
             nearest = nearest_points(point, ring)
             dist = point.distance(nearest[1])
-            if dist < radius:
-                radius = dist
+            radius = min(radius, dist)
         return radius
 
     @classmethod
@@ -550,9 +550,11 @@ class ToolPath:
                 progress = self._furthest_spacing_shapely(arcs, self.cut_area_total)
 
             desired_step = step
-            if radius < step * CORNER_ZOOM:
+            if radius < CORNER_ZOOM:
                 # Limit step size as the arc radius gets very small.
-                desired_step *= max(step / 10, (radius + 1 - step) / CORNER_ZOOM)
+                #plt.plot(pos.x, pos.y, 'x', c="black")
+                modifier = (radius + CORNER_ZOOM_EFFECT - 1) / (CORNER_ZOOM * CORNER_ZOOM_EFFECT)
+                desired_step = max(step * 0.2, step * modifier)
 
             if (abs(desired_step - progress) < abs(desired_step - best_progress) and
                     distance > 0 and best_distance <= voronoi_edge.length):
@@ -611,7 +613,7 @@ class ToolPath:
         self.last_circle = circle
         self.cut_area_total = self.cut_area_total.union(Polygon(circle.path))
 
-        if final_run and abs(distance_remain) < step:
+        if final_run and abs(distance_remain) < desired_step:
             # Close enough to end.
             distance = voronoi_edge.length
 

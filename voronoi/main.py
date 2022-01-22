@@ -83,7 +83,6 @@ def main(argv):
 
 
     tp = geometry.ToolPath(shape)
-    plt.plot(tp.start.x, tp.start.y, 'o', c="black")
 
     for vertex, edges in tp.voronoi.vertex_to_edges.items():
         for edge_index in edges:
@@ -98,6 +97,8 @@ def main(argv):
     for arc in tp.path_data:
         x, y = arc.path.xy
         plt.plot(x, y, c="green", linewidth=1)
+
+    plt.plot(tp.start.x, tp.start.y, 'o', c="black")
 
 
     plt.gca().set_aspect('equal')
