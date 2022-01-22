@@ -1,8 +1,9 @@
-from typing import Dict, Generator, List, Optional, Set, Tuple, Union
+from typing import Dict, Generator, List, NamedTuple, Optional, Set, Tuple, Union
 
+from collections import namedtuple
 import time
 
-from shapely.geometry import LineString, MultiLineString, Point, Polygon 
+from shapely.geometry import LineString, MultiLineString, Point, Polygon
 from shapely.ops import linemerge, nearest_points
 
 import matplotlib.pyplot as plt
@@ -18,7 +19,7 @@ ITERATION_COUNT = 50
 # See C++ Boost documentation.
 VORONOI_RES = 1000
 
-# Whether to visit short voronoi edges first (True) or try to execute longer 
+# Whether to visit short voronoi edges first (True) or try to execute longer
 # branches first.
 # TODO: We could use more long range path planning that take the shortest total
 # path into account.
@@ -48,6 +49,52 @@ def timing(func):
 
 def round_coord(value: Tuple[float, float]) -> Tuple[float, float]:
     return (round(value[0], ROUND_DP), round(value[1], ROUND_DP))
+
+
+ArcData = NamedTuple("Arc", [
+    ("origin", Point),
+    ("radius", float),
+    ("start", Optional[Point]),
+    ("end", Optional[Point]),
+    # TODO: ("widest_at", Optional[Point]),
+    # TODO: ("start_DOC", float),
+    # TODO: ("end_DOC", float),
+    # TODO: ("widest_DOC", float),
+    ("path", LineString)
+    ])
+
+def Circle(origin: Point, radius: float, path: Optional[LineString]=None) -> ArcData:
+    if path is None:
+        return ArcData(origin, radius, None, None, origin.buffer(radius).boundary)
+    return ArcData(origin, radius, None, None, path)
+
+def Arc(origin: Point, start: Point, end: Point, path: Optional[LineString]=None) -> ArcData:
+    assert origin.distance(start) == origin.distance(end)
+    radius = origin.distance(start)
+    if path is None:
+        line = origin.buffer(radius).split(start)
+        line_section = line.split(end)[0]
+        return ArcData(origin, radius, start, end, line_section)
+    return ArcData(origin, radius, start, end, path)
+
+def arcs_from_circle_diff(circle: ArcData, polygon: Polygon) -> List[ArcData]:
+    """ Return any sections of circle that do not overlap polygon. """
+    line_diff = circle.path.difference(polygon)
+    if not line_diff:
+        return []
+    if line_diff.type == "MultiLineString":
+        line_diff = linemerge(line_diff)
+    if line_diff.type != "MultiLineString":
+        line_diff = MultiLineString([line_diff])
+
+    arcs = []
+    for arc in line_diff.geoms:
+        start = Point(arc.coords[0])
+        end = Point(arc.coords[-1])
+        path = LineString(arc.coords)
+        arcs.append(ArcData(circle.origin, circle.radius, start, end, path))
+    return arcs
+
 
 class Voronoi:
     @timing
@@ -158,7 +205,7 @@ class Voronoi:
         vert_a, vert_b = self.edge_to_vertex[edge_index]
         neibours_a = self.vertex_to_edges[vert_a]
         neibours_b = self.vertex_to_edges[vert_b]
-        
+
         neibours_a.remove(edge_index)
         neibours_b.remove(edge_index)
         if not neibours_a:
@@ -180,7 +227,7 @@ class Voronoi:
             vert_a, vert_b = self.edge_to_vertex[index]
             neibours_a = self.vertex_to_edges[vert_a]
             neibours_b = self.vertex_to_edges[vert_b]
-            
+
             center = None
             if len(neibours_a) == 1:
                 center = edge.centroid
@@ -227,7 +274,7 @@ class ToolPath:
         self.voronoi = Voronoi(polygon, tolerence = self.step)
         self.start: Point = self.voronoi.widest_gap()
         self.cut_area_total = Polygon()
-        self.last_circle = Polygon()
+        self.last_circle: Optional[ArcData] = None
         self.fail_count: int = 0
         self.loop_count: int = 0
 
@@ -236,7 +283,7 @@ class ToolPath:
 
         self.open_paths = {edge: start_vertex for edge in self.voronoi.vertex_to_edges[start_vertex]}
 
-        self._walk()
+        self.path_data: List[ArcData] = self._walk()
 
     def _chose_path(self, start_vertex) -> Tuple[Tuple[float, float], int]:
         """
@@ -288,7 +335,7 @@ class ToolPath:
 
             if edge_i in self.visited_edges:
                 edge_i = -1
-        self.last_circle = LineString()
+        self.last_circle = None
         return (start_vertex, edge_i)
 
     def _distance_from_geom(self, point: Point) -> float:
@@ -362,50 +409,87 @@ class ToolPath:
         """
         pos = voronoi_edge.interpolate(distance)
         radius = self._distance_from_geom(pos)
-        
+
         return (pos, radius)
 
+    def _furthest_spacing_arcs(self, arcs: List[ArcData], last_circle: ArcData) -> float:
+        """
+        Calculate maximum step_over between 2 arcs.
+
+        TODO: Well balls.
+        This is actually slower than the brute froce method in _furthest_spacing_shapely(...).
+        Need to do a bit of profiling to see where the time is spent.
+
+        Also have another look at hausdorff_distance() to see if i can get that
+        to work.
+        """
+        #return self._furthest_spacing_shapely(arcs, last_circle.path)
+
+        spacing = -1
+
+        #for arc in arcs:
+        #    for coord in arc.path.coords:
+        #        spacing = max(spacing,
+        #                Point(coord).hausdorff_distance(last_circle.path.boundary))
+        #return spacing
+
+        for arc in arcs:
+            through_centers = LineString([arc.origin, last_circle.origin])
+            through_centers = self._extrapolate_line(last_circle.radius * 100, through_centers)
+
+            if not through_centers.intersects(arc.path):
+                furthest = last_circle.path.distance(Point(arc.path.coords[0]))
+                furthest = max(furthest, last_circle.path.distance(Point(arc.path.coords[1])))
+
+                spacing = max(spacing, furthest)
+                continue
+
+            arc_intersection = arc.path.intersection(through_centers)
+            if not arc_intersection:
+                continue
+            if arc_intersection.type == "MultiPoint":
+                if arc_intersection.geoms[0].covered_by(Polygon(last_circle.path)):
+                    arc_intersection = arc_intersection.geoms[1]
+                else:
+                    arc_intersection = arc_intersection.geoms[0]
+
+            last_intersection = last_circle.path.intersection(through_centers)
+            if last_intersection.geoms[0].covered_by(arc.origin.buffer(arc.radius)):
+                last_intersection = last_intersection.geoms[0]
+            else:
+                last_intersection = last_intersection.geoms[1]
+
+            spacing = max(spacing, LineString([arc_intersection, last_intersection]).length)
+
+        if spacing < 0:
+            return self._furthest_spacing_shapely(arcs, last_circle.path)
+
+        return spacing
+
     @classmethod
-    def _furthest_spacing(cls, a: Union[LineString, MultiLineString], b: LineString) -> float:
+    def _furthest_spacing_shapely(
+            cls, arcs: List[ArcData], previous: LineString) -> float:
         """
         Calculate maximum step_over between 2 arcs.
 
         TODO: Current implementation is expensive. Not sure how shapely's distance
         method works but it is likely "O(N)", making this implementation N^2.
         We can likely reduce that to O(N*log(N)) with a binary search.
-        If these were complete circles there is a mathematical solution:
-        The largest gap is co-linear with the line going through both arc's
-        origins. I think we can use that for an O(1) solution.
 
         Arguments:
-            a: The new arc. Can be split into multiple sections.
-            b: The previous arc. A simple arc.
+            arcs: The new arcs.
+            previous: The previous cut path geometry we are testing the arks against.
 
         Returns:
             The step distance.
         """
-        a_normal = a
-        # Merge lines if we can but ultimately use MultiLineString so we
-        # deal with a single type.
-        if a_normal.type == "MultiLineString":
-            a_normal = linemerge(a_normal)
-        if a_normal.type != "MultiLineString":
-            a_normal = MultiLineString([a_normal])
-
         spacing = 0
-        for section in a_normal.geoms:
-            #start = Point(section.coords[0])
-            #mid = section.interpolate(0.5, normalized=True)
-            #end = Point(section.coords[-1])
-            #spacing = max(spacing, start.distance(b))
-            #spacing = max(spacing, mid.distance(b))
-            #spacing = max(spacing, end.distance(b))
-
-            # This is expensive but yeilds good results.
+        for arc in arcs:
+            # This is expensive but yields good results.
             # Probably want to do a binary search version?
-            for index in range(0, len(section.coords), 2):
-                coord = section.coords[index]
-                spacing = max(spacing, Point(coord).distance(b))
+            for index in range(0, len(arc.path.coords), 2):
+                coord = arc.path.coords[index]
+                spacing = max(spacing, Point(coord).distance(previous))
 
         return spacing
 
@@ -413,7 +497,7 @@ class ToolPath:
             self,
             voronoi_edge: LineString,
             start_distance: float,
-            debug: bool = False) -> float:
+            debug: bool = False) -> Tuple[float, List[ArcData]]:
         """
         Calculate the arc that best fits within the path geometry.
 
@@ -433,6 +517,12 @@ class ToolPath:
               cut path.
             start_distance: The distance along voronoi_edge to start trying to
               find an arc that fits.
+        Returns:
+            A tuple containing:
+                1. Distance along voronoi edge of the final arc.
+                2. A collection of ArcData objects containing relevant information
+                about the arcs generated with an origin the specified distance
+                allong the voronoi edge.
         """
         pid = self._pid(0.75, 0, 0, 0)
         #pid = self._pid(0.19, 0.04, 0.12, 0)
@@ -440,7 +530,6 @@ class ToolPath:
         #pid = self._pid(0, 0.001, 0.3, 0)
         pid.send(None)  # type: ignore
 
-        color = "cyan"
         step = self.step
         final_run = False
         if (voronoi_edge.length - start_distance) < step:
@@ -454,9 +543,8 @@ class ToolPath:
             distance = 0.01
 
         count: int = 0
-        circle: Optional[Polygon] = None
-        arc: Union[LineString, MultiLineString, None] = None
-        arc_section: Optional[LineString] = None
+        circle: Optional[ArcData] = None
+        arcs: List[ArcData] = []
         progress: float = 1.0
         best_progress: float = 0.0
         best_distance: float = 0.0
@@ -479,27 +567,29 @@ class ToolPath:
             if radius <= 0:
                 # The voronoi edge has met the part geometry.
                 # Nothing more to do.
-                color = "yellow"
-                return distance
-            circle = Point(pos).buffer(radius)
-            arc = circle.boundary
+                return (distance, [])
+            circle = Circle(pos, radius)
 
             # Compare proposed arc to cut area.
             # We are only interested in sections that have not been cut yet.
-            arc_section = arc.difference(self.cut_area_total)
-            if not arc_section:
+            arcs = arcs_from_circle_diff(circle, self.cut_area_total)
+            if not arcs:
                 # arc is entirely hidden by previous cut geometry.
                 # Nothing more to do here.
-                return distance
+                return (voronoi_edge.length, [])
 
-            if not self.last_circle:
+            if not self.cut_area_total:
                 # The very first circle in the whole path.
                 # No calculation required. Just draw it.
                 break
 
             # Progress is measured as the furthest point he proposed arc is
             # from the previous one. We are aiming for proposed == step.
-            progress = self._furthest_spacing(arc_section, self.last_circle.boundary)
+            if self.last_circle:
+                progress = self._furthest_spacing_arcs(arcs, self.last_circle)
+            else:
+                progress = self._furthest_spacing_shapely(arcs, self.cut_area_total)
+
             desired_step = step
             if radius < step * CORNER_ZOOM:
                 # Limit step size as the arc radius gets very small.
@@ -512,12 +602,10 @@ class ToolPath:
 
             if abs(desired_step - progress) < desired_step / 20:
                 # Good enough fit.
-                color = "green"
                 break
 
             if abs(best_distance - voronoi_edge.length) < desired_step / 20 and progress < desired_step:
                 # Have reached end of voronoi edge. Pointless going further.
-                color = "green"
                 break
 
             modifier = pid.send((desired_step, progress))
@@ -526,41 +614,30 @@ class ToolPath:
             #log += f"\t{progress=}\t{best_progress=}\t{modifier=}\n"
 
         log += f"\t{progress=}\t{best_progress=}\t{best_distance=}\t{voronoi_edge.length=}\n"
-        log += f"\t{color=}\n"
         log += "\t--------"
 
         if best_distance > voronoi_edge.length:
             best_distance = voronoi_edge.length
-            color = "black"
         if best_distance <= 0:
             best_distance = 0.0001
-            color = "blue"
             log += "\tclamp distance to 0\n"
 
         if distance != best_distance:
             distance = best_distance
             progress = best_progress
             pos, radius = self._arc_at_distance(distance + dist_offset, edge_extended)
-            circle = Point(pos).buffer(radius)
-            arc = circle.boundary
-            arc_section = arc.difference(self.cut_area_total)
+            circle = Circle(Point(pos), radius)
+            arcs = arcs_from_circle_diff(circle, self.cut_area_total)
 
         if debug:
-            # Recalculate view of arc_section without cut path masked out.
-            assert arc is not None
-            arc_section = arc.difference(self.last_circle)
+            # Recalculate view of arcs without cut path masked out.
+            assert circle
+            assert self.last_circle is not None
+            arcs = arcs_from_circle_diff(circle, Polygon(self.last_circle))
 
-        assert arc_section is not None
-        if arc_section:
-            if arc_section.type != "MultiLineString":
-                arc_section = MultiLineString([arc_section])
-            for section in arc_section.geoms:
-                x, y = section.xy
-                plt.plot(x, y, c=color, linewidth=1)
-
+        distance_remain = voronoi_edge.length - distance
         if count == ITERATION_COUNT:
             self.fail_count += 1
-            distance_remain = voronoi_edge.length - distance
             print("\tDid not find an arc that fits. Spacing/Desired: "
                     f"{round(progress, 3)}/{desired_step}"
                     "\tdistance remaining: "
@@ -571,14 +648,15 @@ class ToolPath:
 
         self.loop_count += count
 
+        assert circle is not None
         self.last_circle = circle
-        self.cut_area_total = self.cut_area_total.union(circle)
+        self.cut_area_total = self.cut_area_total.union(Polygon(circle.path))
 
-        if final_run and progress > desired_step * 0.9:
+        if final_run and abs(distance_remain) < step:
             # Close enough to end.
             distance = voronoi_edge.length
 
-        return distance
+        return (distance, arcs)
 
     def _join_edges(
             self,
@@ -633,11 +711,12 @@ class ToolPath:
         assert line.coords[0] == start
         return (line, traversed_edges)
 
-    def _walk(self) -> None:
+    def _walk(self) -> List[ArcData]:
         """
         Iterate through vorinoi edges.
         For each edge, calculate arc positions along the edge.
         """
+        path_data: List[ArcData] = []
         start_vertex = (self.start.x, self.start.y)
         start_vertex, edge_i = self._chose_path(start_vertex)
 
@@ -651,13 +730,11 @@ class ToolPath:
             while dist < combined_edge.length and stuck_count:
                 stuck_count -= 1
                 debug = edge_i in []
-                dist = self._calculate_arc(combined_edge, dist, debug=debug)
+                dist, arc = self._calculate_arc(combined_edge, dist, debug=debug)
+                path_data += arc
 
             if stuck_count <= 0:
                 print(f"stuck: {round(dist, 2)} / {round(combined_edge.length, 2)}")
-
-            plt.plot(start_vertex[0], start_vertex[1], "o", c="yellow")
-            plt.plot(end_vertex[0], end_vertex[1], "o", c="cyan", markersize=4)
 
             self.visited_edges |= traversed_edges
             assert end_vertex != start_vertex
@@ -665,7 +742,8 @@ class ToolPath:
 
             start_vertex, edge_i = self._chose_path(start_vertex)
 
-            if not self.last_circle:
-                self.last_circle = self.cut_area_total
+            #if not self.last_circle:
+            #    self.last_circle = self.cut_area_total
 
         print(f"{self.fail_count=}\t {self.loop_count=}")
+        return path_data

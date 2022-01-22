@@ -81,10 +81,13 @@ def main(argv):
         x, y = interior.xy
         plt.plot(x, y, c="blue", linewidth=2)
 
-    v = geometry.Voronoi(shape, 1)
-    for vertex, edges in v.vertex_to_edges.items():
+
+    tp = geometry.ToolPath(shape)
+    plt.plot(tp.start.x, tp.start.y, 'o', c="black")
+
+    for vertex, edges in tp.voronoi.vertex_to_edges.items():
         for edge_index in edges:
-            edge = v.edges[edge_index]
+            edge = tp.voronoi.edges[edge_index]
             x = []
             y = []
             for point in edge.coords:
@@ -92,14 +95,10 @@ def main(argv):
                 y.append(point[1])
             plt.plot(x, y, c="red", linewidth=2)
 
-    #print()
-    #for vertex, edges in v.vertex_to_edges.items():
-    #    print(vertex, edges)
-    #    for edge_i in edges:
-    #        print("\t", edge_i, v.edge_to_vertex[edge_i])
+    for arc in tp.path_data:
+        x, y = arc.path.xy
+        plt.plot(x, y, c="green", linewidth=1)
 
-    tp = geometry.ToolPath(shape)
-    plt.plot(tp.start.x, tp.start.y, 'o', c="black")
 
     plt.gca().set_aspect('equal')
     plt.show()
