@@ -415,55 +415,14 @@ class ToolPath:
     def _furthest_spacing_arcs(self, arcs: List[ArcData], last_circle: ArcData) -> float:
         """
         Calculate maximum step_over between 2 arcs.
-
-        TODO: Well balls.
-        This is actually slower than the brute froce method in _furthest_spacing_shapely(...).
-        Need to do a bit of profiling to see where the time is spent.
-
-        Also have another look at hausdorff_distance() to see if i can get that
-        to work.
         """
         #return self._furthest_spacing_shapely(arcs, last_circle.path)
 
         spacing = -1
 
-        #for arc in arcs:
-        #    for coord in arc.path.coords:
-        #        spacing = max(spacing,
-        #                Point(coord).hausdorff_distance(last_circle.path.boundary))
-        #return spacing
-
         for arc in arcs:
-            through_centers = LineString([arc.origin, last_circle.origin])
-            through_centers = self._extrapolate_line(last_circle.radius * 100, through_centers)
-
-            if not through_centers.intersects(arc.path):
-                furthest = last_circle.path.distance(Point(arc.path.coords[0]))
-                furthest = max(furthest, last_circle.path.distance(Point(arc.path.coords[1])))
-
-                spacing = max(spacing, furthest)
-                continue
-
-            arc_intersection = arc.path.intersection(through_centers)
-            if not arc_intersection:
-                continue
-            if arc_intersection.type == "MultiPoint":
-                if arc_intersection.geoms[0].covered_by(Polygon(last_circle.path)):
-                    arc_intersection = arc_intersection.geoms[1]
-                else:
-                    arc_intersection = arc_intersection.geoms[0]
-
-            last_intersection = last_circle.path.intersection(through_centers)
-            if last_intersection.geoms[0].covered_by(arc.origin.buffer(arc.radius)):
-                last_intersection = last_intersection.geoms[0]
-            else:
-                last_intersection = last_intersection.geoms[1]
-
-            spacing = max(spacing, LineString([arc_intersection, last_intersection]).length)
-
-        if spacing < 0:
-            return self._furthest_spacing_shapely(arcs, last_circle.path)
-
+            spacing = max(spacing,
+                    last_circle.origin.hausdorff_distance(arc.path) - last_circle.radius)
         return spacing
 
     @classmethod
