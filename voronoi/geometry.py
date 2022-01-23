@@ -64,6 +64,18 @@ ArcData = NamedTuple("Arc", [
     ("path", LineString)
     ])
 
+LineData = NamedTuple("Line", [
+    ("start", Optional[Point]),
+    ("end", Optional[Point]),
+    ("path", LineString),
+    ("safe", bool)
+    ])
+
+def JoinArcs(start: ArcData, end: ArcData, safe_area: Polygon) -> LineData:
+    path = LineString([start.path.coords[0], end.path.coords[-1]])
+    safe = path.covered_by(safe_area)
+    return LineData(start.start, end.end, path, safe)
+
 def Circle(origin: Point, radius: float, path: Optional[LineString]=None) -> ArcData:
     if path is None:
         return ArcData(origin, radius, None, None, origin.buffer(radius).boundary)
@@ -187,7 +199,7 @@ class Voronoi:
                             self._store_edge(line)
                         continue
 
-        #self._drop_irrelevant_edges()
+        self._drop_irrelevant_edges()
 
     def _store_edge(self, edge: LineString) -> None:
         index_a = (edge.coords[0][0], edge.coords[0][1])
@@ -265,9 +277,9 @@ class Voronoi:
 
 class ToolPath:
     @timing
-    def __init__(self, polygon: Polygon) -> None:
+    def __init__(self, polygon: Polygon, step: float) -> None:
         self.polygon: Polygon = polygon
-        self.step: float = 3
+        self.step: float = step
         self.remainder: float = 0.0
         self.last_radius = None
         self.max_dist = max((self.polygon.bounds[2] - self.polygon.bounds[0]),
@@ -285,6 +297,7 @@ class ToolPath:
         self.open_paths = {edge: start_vertex for edge in self.voronoi.vertex_to_edges[start_vertex]}
 
         self.path_data: List[ArcData] = self._walk()
+        self.joined_path_data: List[Union[ArcData, LineData]] = self._join_arcs()
 
     def _chose_path(self, start_vertex) -> Tuple[Tuple[float, float], int]:
         """
@@ -669,7 +682,7 @@ class ToolPath:
         if line.coords[0] != start:
             line = LineString(line.coords[::-1])
 
-        assert line.coords[0] == start
+        #assert line.coords[0] == start
         return (line, traversed_edges)
 
     def _walk(self) -> List[ArcData]:
@@ -698,7 +711,7 @@ class ToolPath:
                 print(f"stuck: {round(dist, 2)} / {round(combined_edge.length, 2)}")
 
             self.visited_edges |= traversed_edges
-            assert end_vertex != start_vertex
+            #assert end_vertex != start_vertex
             start_vertex = end_vertex
 
             start_vertex, edge_i = self._chose_path(start_vertex)
@@ -708,3 +721,18 @@ class ToolPath:
 
         print(f"{self.fail_count=}\t {self.loop_count=}")
         return path_data
+
+    @timing
+    def _join_arcs(self) -> List[Union[ArcData, LineData]]:
+        joined_path_data: List[Union[ArcData, LineData]] = []
+        last_arc = None
+        for arc in self.path_data:
+            if last_arc is not None:
+                joined_path_data.append(JoinArcs(last_arc, arc, self.cut_area_total))
+            joined_path_data.append(arc)
+            last_arc = arc
+
+        return joined_path_data
+
+
+

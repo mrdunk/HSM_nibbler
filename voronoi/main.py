@@ -82,7 +82,7 @@ def main(argv):
         plt.plot(x, y, c="blue", linewidth=2)
 
 
-    tp = geometry.ToolPath(shape)
+    tp = geometry.ToolPath(shape, 5)
 
     for vertex, edges in tp.voronoi.vertex_to_edges.items():
         for edge_index in edges:
@@ -94,9 +94,17 @@ def main(argv):
                 y.append(point[1])
             plt.plot(x, y, c="red", linewidth=2)
 
-    for arc in tp.path_data:
-        x, y = arc.path.xy
-        plt.plot(x, y, c="green", linewidth=1)
+    for element in tp.joined_path_data:
+        if type(element).__name__ == "Arc":
+            x, y = element.path.xy
+            plt.plot(x, y, c="green", linewidth=1)
+        elif type(element).__name__ == "Line":
+            x, y = element.path.xy
+            if element.safe:
+                plt.plot(x, y, linestyle='--', c="purple", linewidth=1)
+            else:
+                plt.plot(x, y, linestyle='--', c="orange", linewidth=1)
+
 
     plt.plot(tp.start.x, tp.start.y, 'o', c="black")
 
