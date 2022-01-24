@@ -3,7 +3,7 @@ from typing import Dict, Generator, List, NamedTuple, Optional, Set, Tuple, Unio
 from collections import namedtuple
 import time
 
-from shapely.geometry import LineString, MultiLineString, Point, Polygon
+from shapely.geometry import LineString, MultiLineString, MultiPolygon, Point, Polygon
 from shapely.ops import linemerge, nearest_points
 
 import matplotlib.pyplot as plt
@@ -34,8 +34,10 @@ ROUND_DP = 4
 # arc diameter.
 # This constant is the minimum arc radius size at which we start reducing step size.
 # Expressed as a multiple of the step size.
-CORNER_ZOOM = 4
-CORNER_ZOOM_EFFECT = 2
+#CORNER_ZOOM = 4
+CORNER_ZOOM = 8
+#CORNER_ZOOM_EFFECT = 0.75
+CORNER_ZOOM_EFFECT = 4
 
 
 def timing(func):
@@ -114,6 +116,9 @@ class Voronoi:
     def __init__(self, polygon: Polygon, tolerence: float = 0) -> None:
         self.polygon = polygon
         self.tolerence = tolerence
+
+        self.max_dist = max((self.polygon.bounds[2] - self.polygon.bounds[0]),
+                (self.polygon.bounds[3] - self.polygon.bounds[1])) + 1
 
         # Collect polygon segments to populate voronoi with.
         geom_primatives = []
@@ -228,6 +233,14 @@ class Voronoi:
         del self.edge_to_vertex[edge_index]
         del self.edges[edge_index]
 
+    def _distance_from_geom(self, point: Point) -> float:
+        radius = self.max_dist
+        for ring in [self.polygon.exterior] + list(self.polygon.interiors):
+            nearest = nearest_points(point, ring)
+            dist = point.distance(nearest[1])
+            radius = min(radius, dist)
+        return radius
+
     def _drop_irrelevant_edges(self) -> None:
         """
         The voronoi edge meets the edge of the cut at a change in angle of the
@@ -235,22 +248,18 @@ class Voronoi:
         part of one of the other voronoi edges so we don't need a vorinoi edge
         into the corner.
         """
-        to_prune = []
+        to_prune = set()
         for index, edge in self.edges.items():
             vert_a, vert_b = self.edge_to_vertex[index]
             neibours_a = self.vertex_to_edges[vert_a]
             neibours_b = self.vertex_to_edges[vert_b]
 
-            center = None
             if len(neibours_a) == 1:
-                center = edge.centroid
+                if abs(self._distance_from_geom(Point(vert_b)) - edge.length) < 0.1:
+                    to_prune.add(index)
             if len(neibours_b) == 1:
-                center = edge.centroid
-
-            radius = edge.length / 2
-            if (center is not None 
-                    and self.polygon.contains(center.buffer(radius - self.tolerence / 2))):
-                to_prune.append(index)
+                if abs(self._distance_from_geom(Point(vert_a)) - edge.length) < 0.1:
+                    to_prune.add(index)
 
         for index in to_prune:
             self._prune_edge(index)
@@ -456,12 +465,16 @@ class ToolPath:
             The step distance.
         """
         spacing = 0
+        polygon = previous
         for arc in arcs:
             # This is expensive but yields good results.
             # Probably want to do a binary search version?
             for index in range(0, len(arc.path.coords), 2):
                 coord = arc.path.coords[index]
-                spacing = max(spacing, Point(coord).distance(previous))
+                if polygon.type == "Polygon":
+                    polygon = MultiPolygon([polygon])
+                for geom in polygon.geoms:
+                    spacing = max(spacing, Point(coord).distance(geom))
 
         return spacing
 
@@ -502,12 +515,11 @@ class ToolPath:
         #pid = self._pid(0, 0.001, 0.3, 0)
         pid.send(None)  # type: ignore
 
-        step = self.step
-        final_run = False
-        if (voronoi_edge.length - start_distance) < step:
-            step = (voronoi_edge.length - start_distance)
-            final_run = True
-        distance = start_distance + step
+        desired_step = self.step
+        if (voronoi_edge.length - start_distance) < desired_step:
+            desired_step = (voronoi_edge.length - start_distance)
+
+        distance = start_distance + desired_step
 
         # Strange shapely bug causes ...interpolate(distance) to give wrong
         # results if distance == 0.
@@ -521,7 +533,6 @@ class ToolPath:
         best_progress: float = 0.0
         best_distance: float = 0.0
         dist_offset: int = 100000
-        desired_step = step
         log = ""
 
         # Extrapolate line beyond it's actual distance to give the PID algorithm
@@ -556,18 +567,18 @@ class ToolPath:
                 break
 
             # Progress is measured as the furthest point he proposed arc is
-            # from the previous one. We are aiming for proposed == step.
+            # from the previous one. We are aiming for proposed == desired_step.
             if self.last_circle:
                 progress = self._furthest_spacing_arcs(arcs, self.last_circle)
             else:
                 progress = self._furthest_spacing_shapely(arcs, self.cut_area_total)
 
-            desired_step = step
+            desired_step = self.step
             if radius < CORNER_ZOOM:
                 # Limit step size as the arc radius gets very small.
                 #plt.plot(pos.x, pos.y, 'x', c="black")
-                modifier = (radius + CORNER_ZOOM_EFFECT - 1) / (CORNER_ZOOM * CORNER_ZOOM_EFFECT)
-                desired_step = max(step * 0.2, step * modifier)
+                multiplier = (CORNER_ZOOM - radius) / CORNER_ZOOM
+                desired_step = self.step - CORNER_ZOOM_EFFECT * multiplier
 
             if (abs(desired_step - progress) < abs(desired_step - best_progress) and
                     distance > 0 and best_distance <= voronoi_edge.length):
@@ -576,10 +587,6 @@ class ToolPath:
 
             if abs(desired_step - progress) < desired_step / 20:
                 # Good enough fit.
-                break
-
-            if abs(best_distance - voronoi_edge.length) < desired_step / 20 and progress < desired_step:
-                # Have reached end of voronoi edge. Pointless going further.
                 break
 
             modifier = pid.send((desired_step, progress))
@@ -625,10 +632,6 @@ class ToolPath:
         assert circle is not None
         self.last_circle = circle
         self.cut_area_total = self.cut_area_total.union(Polygon(circle.path))
-
-        if final_run and abs(distance_remain) < desired_step:
-            # Close enough to end.
-            distance = voronoi_edge.length
 
         return (distance, arcs)
 

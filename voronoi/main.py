@@ -105,7 +105,6 @@ def main(argv):
             else:
                 plt.plot(x, y, linestyle='--', c="orange", linewidth=1)
 
-
     plt.plot(tp.start.x, tp.start.y, 'o', c="black")
 
 
