@@ -82,7 +82,7 @@ def main(argv):
         plt.plot(x, y, c="blue", linewidth=2)
 
 
-    tp = geometry.ToolPath(shape, 5)
+    tp = geometry.ToolPath(shape, 3, geometry.ArcDir.CW)
 
     for vertex, edges in tp.voronoi.vertex_to_edges.items():
         for edge_index in edges:
@@ -98,14 +98,20 @@ def main(argv):
         if type(element).__name__ == "Arc":
             x, y = element.path.xy
             plt.plot(x, y, c="green", linewidth=1)
+
+            #print(round(element.start_angle, 2), round(element.span_angle, 2))
+            plt.plot(element.start.x, element.start.y, 'x', c="cyan")
+            plt.plot(element.end.x, element.end.y, 'x', c="orange")
+
         elif type(element).__name__ == "Line":
+            #continue
             x, y = element.path.xy
             if element.safe:
                 plt.plot(x, y, linestyle='--', c="purple", linewidth=1)
             else:
                 plt.plot(x, y, linestyle='--', c="orange", linewidth=1)
 
-    plt.plot(tp.start.x, tp.start.y, 'o', c="black")
+    plt.plot(tp.start_point.x, tp.start_point.y, 'o', c="black")
 
 
     plt.gca().set_aspect('equal')

@@ -1,6 +1,8 @@
 from typing import Dict, Generator, List, NamedTuple, Optional, Set, Tuple, Union
 
 from collections import namedtuple
+from enum import Enum
+import math
 import time
 
 from shapely.geometry import LineString, MultiLineString, MultiPolygon, Point, Polygon
@@ -36,8 +38,14 @@ ROUND_DP = 4
 # Expressed as a multiple of the step size.
 #CORNER_ZOOM = 4
 CORNER_ZOOM = 8
-#CORNER_ZOOM_EFFECT = 0.75
-CORNER_ZOOM_EFFECT = 4
+CORNER_ZOOM_EFFECT = 0.75
+#CORNER_ZOOM_EFFECT = 4
+
+
+class ArcDir(Enum):
+    CW = 0
+    CCW = 1
+    # Closest = 2  # TODO
 
 
 def timing(func):
@@ -59,6 +67,8 @@ ArcData = NamedTuple("Arc", [
     ("radius", float),
     ("start", Optional[Point]),
     ("end", Optional[Point]),
+    ("start_angle", float),
+    ("span_angle", float),
     # TODO: ("widest_at", Optional[Point]),
     # TODO: ("start_DOC", float),
     # TODO: ("end_DOC", float),
@@ -74,25 +84,76 @@ LineData = NamedTuple("Line", [
     ])
 
 def JoinArcs(start: ArcData, end: ArcData, safe_area: Polygon) -> LineData:
-    path = LineString([start.path.coords[0], end.path.coords[-1]])
+    path = LineString([start.path.coords[-1], end.path.coords[0]])
     safe = path.covered_by(safe_area)
     return LineData(start.start, end.end, path, safe)
 
-def Circle(origin: Point, radius: float, path: Optional[LineString]=None) -> ArcData:
+def Circle(
+        origin: Point,
+        radius: float,
+        winding_dir: ArcDir,
+        path: Optional[LineString]=None) -> ArcData:
+    span_angle = 2 * math.pi
+    if winding_dir == ArcDir.CCW:
+        span_angle = -span_angle
     if path is None:
-        return ArcData(origin, radius, None, None, origin.buffer(radius).boundary)
-    return ArcData(origin, radius, None, None, path)
+        return ArcData(
+                origin, radius, None, None, 0, span_angle, origin.buffer(radius).boundary)
+    # Warning: For this branch no check is done to ensure path has correct
+    # winding direction.
+    return ArcData(origin, radius, None, None, 0, span_angle, path)
 
-def Arc(origin: Point, start: Point, end: Point, path: Optional[LineString]=None) -> ArcData:
-    assert origin.distance(start) == origin.distance(end)
+#def create_arc_from_ends(
+#        origin: Point,
+#        start_: Point,
+#        end_: Point,
+#        winding: ArcDir
+#        ) -> ArcData:
+#    line = origin.buffer(radius).split(start)
+#    paths = line.split(end)
+
+def create_arc_from_path(
+        origin: Point,
+        winding_dir: ArcDir,
+        path_: Optional[LineString]=None
+        ) -> ArcData:
+    # Make copy of path since we may need to modify it.
+    path = LineString(path_)
+
+    start = Point(path.coords[0])
+    end = Point(path.coords[-1])
+    mid = path.interpolate(0.5, normalized=True)
     radius = origin.distance(start)
-    if path is None:
-        line = origin.buffer(radius).split(start)
-        line_section = line.split(end)[0]
-        return ArcData(origin, radius, start, end, line_section)
-    return ArcData(origin, radius, start, end, path)
+    #print(round(radius, 1), round(origin.distance(mid), 1), round(origin.distance(end), 1))
+    assert abs((origin.distance(mid) - radius) / radius) < 0.01
+    assert abs((origin.distance(end) - radius) / radius) < 0.01
 
-def arcs_from_circle_diff(circle: ArcData, polygon: Polygon) -> List[ArcData]:
+    start_angle = math.atan2(start.x - origin.x, start.y - origin.y)
+    end_angle = math.atan2(end.x - origin.x, end.y - origin.y)
+    mid_angle = math.atan2(mid.x - origin.x, mid.y - origin.y)
+
+    ds = (start_angle - mid_angle) % (2 * math.pi)
+    de = (mid_angle - end_angle) % (2 * math.pi)
+    if ((ds > 0 and de > 0 and winding_dir == ArcDir.CCW) or
+            (ds < 0 and de < 0 and winding_dir == ArcDir.CW)):
+        # Needs reversed.
+        path = LineString(path.coords[::-1])
+        start = Point(path.coords[0])
+        end = Point(path.coords[-1])
+        tmp = start_angle
+        start_angle = end_angle
+        end_angle = tmp
+
+    if winding_dir == ArcDir.CW:
+        span_angle = (end_angle - start_angle) % (2 * math.pi)
+    elif winding_dir == ArcDir.CCW:
+        span_angle = -((start_angle - end_angle) % (2 * math.pi))
+
+    return ArcData(origin, radius, start, end, start_angle, span_angle, path)
+
+
+def arcs_from_circle_diff(
+        circle: ArcData, polygon: Polygon, winding_dir: ArcDir) -> List[ArcData]:
     """ Return any sections of circle that do not overlap polygon. """
     line_diff = circle.path.difference(polygon)
     if not line_diff:
@@ -107,7 +168,7 @@ def arcs_from_circle_diff(circle: ArcData, polygon: Polygon) -> List[ArcData]:
         start = Point(arc.coords[0])
         end = Point(arc.coords[-1])
         path = LineString(arc.coords)
-        arcs.append(ArcData(circle.origin, circle.radius, start, end, path))
+        arcs.append(create_arc_from_path(circle.origin, winding_dir, path))
     return arcs
 
 
@@ -189,7 +250,7 @@ class Voronoi:
                         if len(geom_points) == 1 and len(geom_edges) == 1:
                             start_point = Point(round_coord((start_vert.X, start_vert.Y)))
                             end_point = Point(round_coord((end_vert.X, end_vert.Y)))
-                            max_distance = start_point.distance(end_point) / 10
+                            max_distance = start_point.distance(end_point) / 10 + 0.01
                             points = (round_coord(point)
                                 for point in pv.DiscretizeCurvedEdge(edge_index, max_distance))
                             self._store_edge(LineString(points))
@@ -265,8 +326,14 @@ class Voronoi:
             self._prune_edge(index)
 
     @timing
-    def widest_gap(self) -> Point:
-        """ Find the point inside self.polygon but furthest from an edge. """
+    def widest_gap(self) -> Tuple[Point, float]:
+        """
+        Find the point inside self.polygon but furthest from an edge.
+
+        Returns:
+            (Point, float): Point at center of widest point.
+                            Radius of circle that fits in widest point.
+        """
         max_dist = max((self.polygon.bounds[2] - self.polygon.bounds[0]),
                 (self.polygon.bounds[3] - self.polygon.bounds[1])) + 1
 
@@ -281,27 +348,30 @@ class Voronoi:
             if nearest_dist > widest_dist:
                 widest_dist = nearest_dist
                 widest_point = Point(vertex)
-        return widest_point
+        return (widest_point, widest_dist)
 
 
 class ToolPath:
     @timing
-    def __init__(self, polygon: Polygon, step: float) -> None:
+    def __init__(self, polygon: Polygon, step: float, winding_dir: ArcDir) -> None:
         self.polygon: Polygon = polygon
         self.step: float = step
+        self.winding_dir: ArcDir = winding_dir
         self.remainder: float = 0.0
         self.last_radius = None
         self.max_dist = max((self.polygon.bounds[2] - self.polygon.bounds[0]),
                 (self.polygon.bounds[3] - self.polygon.bounds[1])) + 1
         self.voronoi = Voronoi(polygon, tolerence = self.step)
-        self.start: Point = self.voronoi.widest_gap()
+        self.start_point: Point
+        self.start_radius: float
+        self.start_point, self.start_radius = self.voronoi.widest_gap()
         self.cut_area_total = Polygon()
         self.last_circle: Optional[ArcData] = None
         self.fail_count: int = 0
         self.loop_count: int = 0
 
         self.visited_edges: Set[int] = set()
-        start_vertex = (self.start.x, self.start.y)
+        start_vertex = (self.start_point.x, self.start_point.y)
 
         self.open_paths = {edge: start_vertex for edge in self.voronoi.vertex_to_edges[start_vertex]}
 
@@ -551,11 +621,11 @@ class ToolPath:
                 # The voronoi edge has met the part geometry.
                 # Nothing more to do.
                 return (distance, [])
-            circle = Circle(pos, radius)
+            circle = Circle(pos, radius, self.winding_dir)
 
             # Compare proposed arc to cut area.
             # We are only interested in sections that have not been cut yet.
-            arcs = arcs_from_circle_diff(circle, self.cut_area_total)
+            arcs = arcs_from_circle_diff(circle, self.cut_area_total, self.winding_dir)
             if not arcs:
                 # arc is entirely hidden by previous cut geometry.
                 # Nothing more to do here.
@@ -607,14 +677,14 @@ class ToolPath:
             distance = best_distance
             progress = best_progress
             pos, radius = self._arc_at_distance(distance + dist_offset, edge_extended)
-            circle = Circle(Point(pos), radius)
-            arcs = arcs_from_circle_diff(circle, self.cut_area_total)
+            circle = Circle(Point(pos), radius, self.winding_dir)
+            arcs = arcs_from_circle_diff(circle, self.cut_area_total, self.winding_dir)
 
         if debug:
             # Recalculate view of arcs without cut path masked out.
             assert circle
             assert self.last_circle is not None
-            arcs = arcs_from_circle_diff(circle, Polygon(self.last_circle))
+            arcs = arcs_from_circle_diff(circle, Polygon(self.last_circle), self.winding_dir)
 
         distance_remain = voronoi_edge.length - distance
         if count == ITERATION_COUNT:
@@ -630,9 +700,13 @@ class ToolPath:
         self.loop_count += count
 
         assert circle is not None
+
         self.last_circle = circle
         self.cut_area_total = self.cut_area_total.union(Polygon(circle.path))
 
+        if progress < self.step / 20:
+            # Don't actually draw this trivially thin arc.
+            return (distance, [])
         return (distance, arcs)
 
     def _join_edges(
@@ -694,7 +768,7 @@ class ToolPath:
         For each edge, calculate arc positions along the edge.
         """
         path_data: List[ArcData] = []
-        start_vertex = (self.start.x, self.start.y)
+        start_vertex = (self.start_point.x, self.start_point.y)
         start_vertex, edge_i = self._chose_path(start_vertex)
 
         while edge_i >= 0:
@@ -718,9 +792,6 @@ class ToolPath:
             start_vertex = end_vertex
 
             start_vertex, edge_i = self._chose_path(start_vertex)
-
-            #if not self.last_circle:
-            #    self.last_circle = self.cut_area_total
 
         print(f"{self.fail_count=}\t {self.loop_count=}")
         return path_data
