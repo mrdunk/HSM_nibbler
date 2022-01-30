@@ -17,7 +17,7 @@ Vertex = Tuple[float, float]
 # with the best we have found so far.
 ITERATION_COUNT = 50
 
-# Resolution of vorinoi algorithm.
+# Resolution of voronoi algorithm.
 # See C++ Boost documentation.
 VORONOI_RES = 1000
 
@@ -25,8 +25,8 @@ VORONOI_RES = 1000
 # branches first.
 # TODO: We could use more long range path planning that take the shortest total
 # path into account.
-BREADTH_FIRST = True
-#BREADTH_FIRST = False
+#BREADTH_FIRST = True
+BREADTH_FIRST = False
 
 # Number of decimal places resolution for coordinates.
 ROUND_DP = 4
@@ -73,7 +73,8 @@ ArcData = NamedTuple("Arc", [
     # TODO: ("start_DOC", float),
     # TODO: ("end_DOC", float),
     # TODO: ("widest_DOC", float),
-    ("path", LineString)
+    ("path", LineString),
+    ("debug", str)
     ])
 
 LineData = NamedTuple("Line", [
@@ -83,12 +84,12 @@ LineData = NamedTuple("Line", [
     ("safe", bool)
     ])
 
-def JoinArcs(start: ArcData, end: ArcData, safe_area: Polygon) -> LineData:
+def join_arcs(start: ArcData, end: ArcData, safe_area: Polygon) -> LineData:
     path = LineString([start.path.coords[-1], end.path.coords[0]])
     safe = path.covered_by(safe_area)
     return LineData(start.start, end.end, path, safe)
 
-def Circle(
+def create_circle(
         origin: Point,
         radius: float,
         winding_dir: ArcDir,
@@ -98,19 +99,10 @@ def Circle(
         span_angle = -span_angle
     if path is None:
         return ArcData(
-                origin, radius, None, None, 0, span_angle, origin.buffer(radius).boundary)
+                origin, radius, None, None, 0, span_angle, origin.buffer(radius).boundary, "")
     # Warning: For this branch no check is done to ensure path has correct
     # winding direction.
-    return ArcData(origin, radius, None, None, 0, span_angle, path)
-
-#def create_arc_from_ends(
-#        origin: Point,
-#        start_: Point,
-#        end_: Point,
-#        winding: ArcDir
-#        ) -> ArcData:
-#    line = origin.buffer(radius).split(start)
-#    paths = line.split(end)
+    return ArcData(origin, radius, None, None, 0, span_angle, path, "")
 
 def create_arc_from_path(
         origin: Point,
@@ -149,7 +141,7 @@ def create_arc_from_path(
     elif winding_dir == ArcDir.CCW:
         span_angle = -((start_angle - end_angle) % (2 * math.pi))
 
-    return ArcData(origin, radius, start, end, start_angle, span_angle, path)
+    return ArcData(origin, radius, start, end, start_angle, span_angle, path, "")
 
 
 def arcs_from_circle_diff(
@@ -265,22 +257,35 @@ class Voronoi:
                             self._store_edge(line)
                         continue
 
-        self._drop_irrelevant_edges()
+        # The widest_gap() method checks vertices for the widest point.
+        # If we remove this vertex subsequent calls will not work.
+        # If we cached the value instead, client code will not be able to use the
+        # returned vertex value as an index into this class's data structures.
+        widest_point, _ = self.widest_gap()
+        dont_drop = self.vertex_to_edges[widest_point.coords[0]]
 
-    def _store_edge(self, edge: LineString) -> None:
-        index_a = (edge.coords[0][0], edge.coords[0][1])
-        index_b = (edge.coords[-1][0], edge.coords[-1][1])
+        self._drop_irrelevant_edges(dont_drop)
+        self._combine_edges()
+        # Clean up circle center jitter caused by floating point in voronoi library.
+        self._drop_short_edges(dont_drop)
+        self._drop_short_edges(dont_drop)
 
-        if index_a == index_b:
-            return
+    def _store_edge(self, edge: LineString, replace_index=None) -> None:
+        edge_index = replace_index
+        if edge_index is None:
+            edge_index = self.edge_count
+            self.edge_count += 1
+        vert_index_a = (edge.coords[0][0], edge.coords[0][1])
+        vert_index_b = (edge.coords[-1][0], edge.coords[-1][1])
 
-        self.edges[self.edge_count] = edge
-        self.vertex_to_edges.setdefault(index_a, []).append(self.edge_count)
-        self.vertex_to_edges.setdefault(index_b, []).append(self.edge_count)
-        self.edge_to_vertex[self.edge_count] = (index_a, index_b)
-        self.edge_count += 1
+        self.edges[edge_index] = edge
+        if edge_index not in self.vertex_to_edges:
+            self.vertex_to_edges.setdefault(vert_index_a, []).append(edge_index)
+        if edge_index not in self.vertex_to_edges:
+            self.vertex_to_edges.setdefault(vert_index_b, []).append(edge_index)
+        self.edge_to_vertex[edge_index] = (vert_index_a, vert_index_b)
 
-    def _prune_edge(self, edge_index: int) -> None:
+    def _remove_edge(self, edge_index: int) -> None:
         vert_a, vert_b = self.edge_to_vertex[edge_index]
         neibours_a = self.vertex_to_edges[vert_a]
         neibours_b = self.vertex_to_edges[vert_b]
@@ -295,6 +300,10 @@ class Voronoi:
         del self.edges[edge_index]
 
     def _distance_from_geom(self, point: Point) -> float:
+        """
+        Distance form nearest edge. Note this edge may be the outer boundary or
+        the edge of an island.
+        """
         radius = self.max_dist
         for ring in [self.polygon.exterior] + list(self.polygon.interiors):
             nearest = nearest_points(point, ring)
@@ -302,12 +311,108 @@ class Voronoi:
             radius = min(radius, dist)
         return radius
 
-    def _drop_irrelevant_edges(self) -> None:
+    def _find_edges_to_combine(self) -> Set[int]:
         """
-        The voronoi edge meets the edge of the cut at a change in angle of the
-        cut. If that corner is open enough to fit a circle, it will get cut as
-        part of one of the other voronoi edges so we don't need a vorinoi edge
-        into the corner.
+        Find edges that have a branch or dead end at one end
+        and join exactly one edge at the other end.
+        """
+        ends = set()
+        for edge_index, vertices in self.edge_to_vertex.items():
+            vert_a = vertices[0]
+            vert_b = vertices[1]
+            edges_a = self.vertex_to_edges[vert_a]
+            edges_b = self.vertex_to_edges[vert_b]
+            if len(edges_a) == 2 or len(edges_b) == 2:
+                if len(edges_a) != 2 or len(edges_b) != 2:
+                    ends.add(edge_index)
+        return ends
+
+    def _combine_edge(self, edge_start_i: int) -> bool:
+        """
+        Any edge that shares a vertex with only one other edge should be merged
+        with that edge.
+        Arguments:
+            edge_start_i: The index of an edge to be merged with it's neighbours
+            if appropriate.
+        Returns:
+            True: The resulting merged edge may be adjacent to other edges to merge
+                with.
+            False: Either not possible to merge with neighbour or resulting merged
+                edge will not need merged with it's neighbour.
+        """
+        vertices_start = self.edge_to_vertex[edge_start_i]
+        vertex_start = vertices_start[0]
+        edges_a = self.vertex_to_edges[vertex_start]
+        edges_b = self.vertex_to_edges[vertices_start[1]]
+        assert edges_a and edges_b
+        if len(edges_a) != 2 and len(edges_b) != 2:
+            # Branches at either end. Nothing to combine.
+            return False
+
+        if len(edges_b) != 2:
+            # make edges_a the start
+            tmp = edges_b
+            edges_b = edges_a
+            edges_a = tmp
+            vertex_start = vertices_start[-1]
+
+        assert len(edges_a) != 2
+        assert len(edges_b) == 2
+
+        # Gather information about either end of the edges to be combined.
+        edge_next_i = edges_b[0]
+        if edge_start_i == edge_next_i:
+            edge_next_i = edges_b[1]
+
+        vertices_next = self.edge_to_vertex[edge_next_i]
+
+        vertex_end = vertices_next[0]
+        if vertex_end == vertices_start[-1]:
+            vertex_end = vertices_next[-1]
+
+        # Cannot use linemerge(...) here because when simplifying a loop,
+        # start_coords and next_coords could be joined at either end.
+        # Sometimes linemerge(...) would pick the wrong place to merge.
+        start_coords = self.edges[edge_start_i].coords
+        if start_coords[-1] == vertex_start:
+            start_coords = start_coords[::-1]
+        next_coords = self.edges[edge_next_i].coords
+        if next_coords[0] == vertex_end:
+            next_coords = next_coords[::-1]
+        edge_combined = LineString(list(start_coords) + list(next_coords))
+
+        assert vertex_start == edge_combined.coords[0] or vertex_start == edge_combined.coords[-1]
+        assert vertex_end == edge_combined.coords[0] or vertex_end == edge_combined.coords[-1]
+
+        # Make the changes.
+        self._remove_edge(edge_start_i)
+        self._remove_edge(edge_next_i)
+
+        self._store_edge(edge_combined, edge_start_i)
+
+        if vertex_start == vertex_end:
+            # Have gone all the way around, back to the start of a loop.
+            return False
+        return True
+
+    def _combine_edges(self) -> None:
+        """
+        Iterate all edges, merging with neighbours where appropriate.
+        Any edge that shares a vertex with only one other edge should be merged
+        with that edge.
+        """
+        edges_to_combine = self._find_edges_to_combine()
+        while edges_to_combine and (edge_index := edges_to_combine.pop()):
+            if edge_index not in self.edges:
+                continue
+            while self._combine_edge(edge_index):
+                pass
+
+    def _drop_irrelevant_edges(self, dont_drop: List[int] = []) -> None:
+        """
+        If any geometry resulting from a  voronoi edge will be covered by the
+        geometry of some other voronoi edge it is deemed irrelevant and pruned
+        by this function.
         """
         to_prune = set()
         for index, edge in self.edges.items():
@@ -323,7 +428,30 @@ class Voronoi:
                     to_prune.add(index)
 
         for index in to_prune:
-            self._prune_edge(index)
+            if index not in dont_drop:
+                self._remove_edge(index)
+
+    def _drop_short_edges(self, dont_drop: List[int] = []) -> None:
+        # TODO: Make this follow branches.
+        to_prune = set()
+        for index, edge in self.edges.items():
+            if index in dont_drop:
+                continue
+
+            vert_a, vert_b = self.edge_to_vertex[index]
+            neibours_a = self.vertex_to_edges[vert_a]
+            neibours_b = self.vertex_to_edges[vert_b]
+
+            if len(neibours_a) == 1:
+                if edge.length < self.tolerence:
+                    to_prune.add(index)
+            if len(neibours_b) == 1:
+                if edge.length < self.tolerence:
+                    to_prune.add(index)
+
+        for index in to_prune:
+            if index not in dont_drop:
+                self._remove_edge(index)
 
     @timing
     def widest_gap(self) -> Tuple[Point, float]:
@@ -359,8 +487,6 @@ class ToolPath:
         self.winding_dir: ArcDir = winding_dir
         self.remainder: float = 0.0
         self.last_radius = None
-        self.max_dist = max((self.polygon.bounds[2] - self.polygon.bounds[0]),
-                (self.polygon.bounds[3] - self.polygon.bounds[1])) + 1
         self.voronoi = Voronoi(polygon, tolerence = self.step)
         self.start_point: Point
         self.start_radius: float
@@ -373,71 +499,55 @@ class ToolPath:
         self.visited_edges: Set[int] = set()
         start_vertex = (self.start_point.x, self.start_point.y)
 
-        self.open_paths = {edge: start_vertex for edge in self.voronoi.vertex_to_edges[start_vertex]}
+        self.open_paths = {}
 
         self.path_data: List[ArcData] = self._walk()
         self.joined_path_data: List[Union[ArcData, LineData]] = self._join_arcs()
 
-    def _chose_path(self, start_vertex) -> Tuple[Tuple[float, float], int]:
+    def _chose_path_remainder(self, closest: Tuple[float, float]) -> Tuple[Tuple[float, float], int]:
         """
-        Chose a path onwards from start_vertex.
-
-        globals:
-            BREADTH_FIRST = True:
-                Try to pick the shortest option without branches.
-            BREADTH_FIRST = False:
-                Try to pick the longest option without branches.
+        Choose a vertex with an un-traveled voronoi edge leading from it.
 
         Returns:
-            Index of the edge onwards form start_vertex.
+            A vertex that has un-traveled edges leading from it.
         """
-        choices = self.voronoi.vertex_to_edges[start_vertex]
-
-        # Work out which of the branches onwards from start_vertex is has
-        # the longest distance to it's next branch.
-        shortest_len = self.max_dist + 1
-        shortest_edge = -1
-        longest_len = 0
-        longest_edge = -1
-        for edge_index in choices:
-            if edge_index in self.visited_edges:
-                continue
-            self.open_paths[edge_index] = start_vertex
-            edge_length = self._join_edges(start_vertex, edge_index)[0].length
-            if edge_length > longest_len:
-                longest_len = edge_length
-                longest_edge = edge_index
-            elif edge_length < shortest_len:
-                shortest_len = edge_length
-                shortest_edge = edge_index
-
-        if BREADTH_FIRST and shortest_edge >= 0:
-            self.open_paths.pop(shortest_edge, None)
-            return (start_vertex, shortest_edge)
-        elif longest_edge >= 0:
-            self.open_paths.pop(longest_edge, None)
-            return (start_vertex, longest_edge)
-
-        # There is no adjoining path onwards.
-        # Pick one from the list of open branches.
-        edge_i = -1
-        while edge_i < 0 and len(self.open_paths) > 0:
-            edge_i = list(self.open_paths.keys())[0]
-            start_vertex = self.open_paths[edge_i]
-            del self.open_paths[edge_i]
-
+        shortest = self.voronoi.max_dist + 1
+        closest_vertex = None
+        closest_edge = None
+        to_cleanup = []
+        for edge_i, vertex in self.open_paths.items():
             if edge_i in self.visited_edges:
-                edge_i = -1
-        self.last_circle = None
-        return (start_vertex, edge_i)
+                to_cleanup.append(edge_i)
+            else:
+                if closest_vertex is None:
+                    shortest = self.voronoi.max_dist
+                    closest_vertex = vertex
+                    closest_edge = edge_i
+                else:
+                    dist = Point(vertex).distance(Point(closest))
+                    if dist < shortest:
+                        closest_vertex = vertex
+                        closest_edge = edge_i
+                        shortest = dist
 
-    def _distance_from_geom(self, point: Point) -> float:
-        radius = self.max_dist
-        for ring in [self.polygon.exterior] + list(self.polygon.interiors):
-            nearest = nearest_points(point, ring)
-            dist = point.distance(nearest[1])
-            radius = min(radius, dist)
-        return radius
+        for edge_i in to_cleanup:
+            self.open_paths.pop(edge_i)
+
+        if closest_edge is not None:
+            self.open_paths.pop(closest_edge)
+
+        self.last_circle = None
+        return closest_vertex
+
+        #start_vertex = None
+        #while start_vertex is None and len(self.open_paths) > 0:
+        #    edge_i, start_vertex = self.open_paths.popitem()
+
+        #    if edge_i in self.visited_edges:
+        #        edge_i = -1
+        #        start_vertex = None
+        #self.last_circle = None
+        #return start_vertex
 
     @classmethod
     def _extrapolate_line(cls, extra: float, line: LineString) -> LineString:
@@ -500,7 +610,7 @@ class ToolPath:
         set distance along a voronoi edge.
         """
         pos = voronoi_edge.interpolate(distance)
-        radius = self._distance_from_geom(pos)
+        radius = self.voronoi._distance_from_geom(pos)
 
         return (pos, radius)
 
@@ -508,7 +618,7 @@ class ToolPath:
         """
         Calculate maximum step_over between 2 arcs.
         """
-        #return self._furthest_spacing_shapely(arcs, last_circle.path)
+        #return self._furthest_spacing_shapely(arcs, Polygon(last_circle.path))
 
         spacing = -1
 
@@ -541,10 +651,11 @@ class ToolPath:
             # Probably want to do a binary search version?
             for index in range(0, len(arc.path.coords), 2):
                 coord = arc.path.coords[index]
-                if polygon.type == "Polygon":
-                    polygon = MultiPolygon([polygon])
-                for geom in polygon.geoms:
-                    spacing = max(spacing, Point(coord).distance(geom))
+                #if polygon.type == "Polygon":
+                #    polygon = MultiPolygon([polygon])
+                #for geom in polygon.geoms:
+                #    spacing = max(spacing, Point(coord).distance(geom))
+                spacing = max(spacing, Point(coord).distance(polygon))
 
         return spacing
 
@@ -594,7 +705,7 @@ class ToolPath:
         # Strange shapely bug causes ...interpolate(distance) to give wrong
         # results if distance == 0.
         if distance == 0:
-            distance = 0.01
+            distance = 0.001
 
         count: int = 0
         circle: Optional[ArcData] = None
@@ -610,7 +721,7 @@ class ToolPath:
         edge_extended: LineString = self._extrapolate_line(dist_offset, voronoi_edge)
         assert abs(edge_extended.length - (voronoi_edge.length + 2 * dist_offset)) < 0.0001
 
-        # Loop multiple times, trying to converge on a distance along the vorinoi
+        # Loop multiple times, trying to converge on a distance along the voronoi
         # edge that provides the correct step size.
         while count < ITERATION_COUNT:
             count += 1
@@ -621,7 +732,7 @@ class ToolPath:
                 # The voronoi edge has met the part geometry.
                 # Nothing more to do.
                 return (distance, [])
-            circle = Circle(pos, radius, self.winding_dir)
+            circle = create_circle(pos, radius, self.winding_dir)
 
             # Compare proposed arc to cut area.
             # We are only interested in sections that have not been cut yet.
@@ -662,22 +773,22 @@ class ToolPath:
             modifier = pid.send((desired_step, progress))
             distance += modifier
 
-            #log += f"\t{progress=}\t{best_progress=}\t{modifier=}\n"
+            #log += f"\t{start_distance}\t{distance=}\t{progress=}\t{best_progress=}\t{modifier=}\n"
 
         log += f"\t{progress=}\t{best_progress=}\t{best_distance=}\t{voronoi_edge.length=}\n"
         log += "\t--------"
 
         if best_distance > voronoi_edge.length:
+            if abs(voronoi_edge.length - best_distance) < desired_step / 20:
+                # Ignore trivial edge ends.
+                return (distance, [])
             best_distance = voronoi_edge.length
-        if best_distance <= 0:
-            best_distance = 0.0001
-            log += "\tclamp distance to 0\n"
 
         if distance != best_distance:
             distance = best_distance
             progress = best_progress
             pos, radius = self._arc_at_distance(distance + dist_offset, edge_extended)
-            circle = Circle(Point(pos), radius, self.winding_dir)
+            circle = create_circle(Point(pos), radius, self.winding_dir)
             arcs = arcs_from_circle_diff(circle, self.cut_area_total, self.winding_dir)
 
         if debug:
@@ -700,99 +811,102 @@ class ToolPath:
         self.loop_count += count
 
         assert circle is not None
-
         self.last_circle = circle
         self.cut_area_total = self.cut_area_total.union(Polygon(circle.path))
 
-        if progress < self.step / 20:
-            # Don't actually draw this trivially thin arc.
-            return (distance, [])
+        #if progress < self.step / 20:
+            # Don't actually cut this trivially thin arc.
+        #    return (distance, [])
         return (distance, arcs)
 
-    def _join_edges(
-            self,
-            start: Tuple[float, float],
-            edge_index: int
-            ) -> Tuple[LineString, Set[int]]:
+    def _join_branches(self, start_vertex: Tuple[float, float]) -> LineString:
         """
-        Traverse voronoi edges, combining any sections with no branches.
+        Walk a section of the voronoi edge tree, creating a combined edge as we
+        go.
 
         Returns:
-            Tuple containing:
-                A LineString object of the combined edges.
-                A list of indexes into self.edges of the edges traversed.
+            A LineString object of the combined edges.
         """
-        assert start in self.voronoi.edge_to_vertex[edge_index]
+        vertex = start_vertex
 
-        line_parts: List[LineString] = []
-        traversed_edges: Set[int] = set()
-        head = start
-        next_edge_i = edge_index
-        while next_edge_i not in self.visited_edges:
-            edge = self.voronoi.edges[next_edge_i]
-            edge_coords = edge.coords
-            if edge_coords[0] != head:
-                edge_coords = edge_coords[::-1]
+        line_coords: List[Tuple[float, float]] = []
 
-            if line_parts and edge_coords[-1] == line_parts[0].coords[0]:
-                # Loop. Stop before saving.
+        while True:
+            branches = self.voronoi.vertex_to_edges[vertex]
+            candidate = None
+            longest = 0
+            for branch in branches:
+                if branch not in self.visited_edges:
+                    self.open_paths[branch] = vertex
+                    length = self.voronoi.edges[branch].length
+                    if candidate is None:
+                        candidate = branch
+                    elif BREADTH_FIRST and length < longest:
+                        candidate = branch
+                    elif not BREADTH_FIRST and length > longest:
+                        candidate = branch
+
+                    longest = max(longest, length)
+
+            if candidate is None:
                 break
 
-            traversed_edges.add(next_edge_i)
-            line_parts.append(edge)
-
-            branches = self.voronoi.vertex_to_edges[edge_coords[-1]]
-            if len(branches) != 2:
-                break
-
-            if next_edge_i == branches[0]:
-                next_edge_i = branches[1]
+            self.visited_edges.add(candidate)
+            edge_coords = self.voronoi.edges[candidate].coords
+            if not line_coords:
+                if vertex == edge_coords[-1]:
+                    edge_coords = edge_coords[::-1]
             else:
-                next_edge_i = branches[0]
+                if line_coords[-1] != edge_coords[0]:
+                    edge_coords = edge_coords[::-1]
+            line_coords += edge_coords
 
-            if next_edge_i in traversed_edges:
-                break
+            vertices = self.voronoi.edge_to_vertex[candidate]
+            assert vertex in vertices
+            if vertex == vertices[0]:
+                vertex = vertices[1]
+            else:
+                vertex = vertices[0]
 
-            head = edge_coords[-1]
+        line = LineString(line_coords)
 
-        line = linemerge(MultiLineString(line_parts))
-        if line.coords[0] != start:
-            line = LineString(line.coords[::-1])
-
-        #assert line.coords[0] == start
-        return (line, traversed_edges)
+        return line
 
     def _walk(self) -> List[ArcData]:
         """
-        Iterate through vorinoi edges.
+        Iterate through voronoi edges.
         For each edge, calculate arc positions along the edge.
         """
         path_data: List[ArcData] = []
         start_vertex = (self.start_point.x, self.start_point.y)
-        start_vertex, edge_i = self._chose_path(start_vertex)
 
-        while edge_i >= 0:
-            print(f"_walk\t{edge_i}\t{start_vertex}")
-            combined_edge, traversed_edges = self._join_edges(start_vertex, edge_i)
-            start_vertex = combined_edge.coords[0]
-            end_vertex = combined_edge.coords[-1]
+        while start_vertex is not None:
+            combined_edge = self._join_branches(start_vertex)
+            print(f"_walk\t{start_vertex}\t{combined_edge.length=}")
+
             dist = 0.0
-            stuck_count = int(combined_edge.length * 20 / self.step + 10)
+            stuck_count = int(combined_edge.length * 10 / self.step + 10)
+            closest = 2 * combined_edge.length
             while dist < combined_edge.length and stuck_count:
+                if stuck_count % 100 == 1:
+                    print(stuck_count)
                 stuck_count -= 1
-                debug = edge_i in []
-                dist, arc = self._calculate_arc(combined_edge, dist, debug=debug)
-                path_data += arc
+                dist, arcs = self._calculate_arc(combined_edge, dist)
+
+                if abs(combined_edge.length - dist) > closest:
+                    # Getting worse.
+                    break
+                closest = abs(combined_edge.length - dist)
+
+                path_data += arcs
 
             if stuck_count <= 0:
                 print(f"stuck: {round(dist, 2)} / {round(combined_edge.length, 2)}")
 
-            self.visited_edges |= traversed_edges
-            #assert end_vertex != start_vertex
-            start_vertex = end_vertex
+            start_vertex = self._chose_path_remainder(combined_edge.coords[-1])
 
-            start_vertex, edge_i = self._chose_path(start_vertex)
-
+        print("Sets match:", self.visited_edges == set(self.voronoi.edges.keys()))
+        print("Unvisited paths:", self.open_paths)
         print(f"{self.fail_count=}\t {self.loop_count=}")
         return path_data
 
@@ -802,7 +916,7 @@ class ToolPath:
         last_arc = None
         for arc in self.path_data:
             if last_arc is not None:
-                joined_path_data.append(JoinArcs(last_arc, arc, self.cut_area_total))
+                joined_path_data.append(join_arcs(last_arc, arc, self.cut_area_total))
             joined_path_data.append(arc)
             last_arc = arc
 
