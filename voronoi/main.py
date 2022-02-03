@@ -92,7 +92,7 @@ def main(argv):
             for point in edge.coords:
                 x.append(point[0])
                 y.append(point[1])
-            plt.plot(x, y, c="red", linewidth=2)
+            #plt.plot(x, y, c="red", linewidth=2)
             #plt.plot(x[0], y[0], 'x', c="black")
 
     for element in tp.joined_path_data:
@@ -109,7 +109,7 @@ def main(argv):
             #plt.plot(element.end.x, element.end.y, 'x', c="orange")
 
         elif type(element).__name__ == "Line":
-            #continue
+            continue
             x, y = element.path.xy
             if element.safe:
                 plt.plot(x, y, linestyle='--', c="purple", linewidth=1)

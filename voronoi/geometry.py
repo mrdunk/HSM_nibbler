@@ -37,8 +37,9 @@ ROUND_DP = 4
 # Expressed as a multiple of the step size.
 #CORNER_ZOOM = 4
 CORNER_ZOOM = 8
+#CORNER_ZOOM = 0
 CORNER_ZOOM_EFFECT = 0.75
-#CORNER_ZOOM_EFFECT = 4
+#CORNER_ZOOM_EFFECT = 3
 
 
 class ArcDir(Enum):
@@ -494,7 +495,8 @@ class ToolPath:
         self.path_data: List[ArcData] = self._walk()
         self.joined_path_data: List[Union[ArcData, LineData]] = self._join_arcs()
 
-    def _chose_path_remainder(self, closest: Tuple[float, float]) -> Optional[Tuple[float, float]]:
+    def _chose_path_remainder(
+            self, closest: Optional[Tuple[float, float]] = None) -> Optional[Tuple[float, float]]:
         """
         Choose a vertex with an un-traveled voronoi edge leading from it.
 
@@ -514,7 +516,11 @@ class ToolPath:
                     closest_vertex = vertex
                     closest_edge = edge_i
                 else:
-                    dist = Point(vertex).distance(Point(closest))
+                    if closest:
+                        dist = Point(vertex).distance(Point(closest))
+                    else:
+                        dist = 0
+
                     if dist < shortest:
                         closest_vertex = vertex
                         closest_edge = edge_i
@@ -538,6 +544,19 @@ class ToolPath:
         #        start_vertex = None
         #self.last_circle = None
         #return start_vertex
+
+    @classmethod
+    def _colapse_dupe_points(cls, line: LineString) -> Optional[LineString]:
+        points = []
+        last_point = None
+        for point in line.coords:
+            if last_point == point:
+                continue
+            points.append(point)
+            last_point = point
+        if len(points) < 2:
+            return None
+        return LineString(points)
 
     @classmethod
     def _extrapolate_line(cls, extra: float, line: LineString) -> LineString:
@@ -869,7 +888,11 @@ class ToolPath:
         start_vertex: Optional[Tuple[float, float]] = (self.start_point.x, self.start_point.y)
 
         while start_vertex is not None:
-            combined_edge = self._join_branches(start_vertex)
+            combined_edge = self._colapse_dupe_points(self._join_branches(start_vertex))
+            if not combined_edge:
+                start_vertex = self._chose_path_remainder()
+                continue
+
             print(f"_walk\t{start_vertex}\t{combined_edge.length=}")
 
             dist = 0.0
