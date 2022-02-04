@@ -6,6 +6,7 @@ import time
 
 from shapely.geometry import LineString, MultiLineString, Point, Polygon
 from shapely.ops import linemerge, nearest_points
+from shapely.validation import make_valid
 
 import matplotlib.pyplot as plt
 import pyvoronoi
@@ -179,10 +180,13 @@ class Voronoi:
                 if prev_point is None:
                     first_point = point
                     prev_point = point
+                elif point == prev_point:
+                    continue
                 else:
                     geom_primatives.append((prev_point, point))
                     prev_point = point
-            geom_primatives.append((prev_point, first_point))
+            if prev_point != first_point:
+                geom_primatives.append((prev_point, first_point))
 
         # Generate voronoi diagram.
         pv = pyvoronoi.Pyvoronoi(VORONOI_RES)
@@ -246,6 +250,7 @@ class Voronoi:
                             # A parabola between 2 lines (as opposed to 1 line and one point)
                             # leaves the DiscretizeCurvedEdge() function broken sometimes.
                             # Let's just assume a straight line edge in these cases.
+                            print("BORKED VORONOI", geom_points, geom_edges)
                             line = LineString((
                                 round_coord((start_vert.X, start_vert.Y)),
                                 round_coord((end_vert.X, end_vert.Y))
@@ -478,9 +483,12 @@ class ToolPath:
         self.polygon: Polygon = polygon
         self.step: float = step
         self.winding_dir: ArcDir = winding_dir
+
+        self._validate_poly()
+
         self.remainder: float = 0.0
         self.last_radius = None
-        self.voronoi = Voronoi(polygon, tolerence = self.step)
+        self.voronoi = Voronoi(self.polygon, tolerence = self.step)
         self.start_point: Point
         self.start_radius: float
         self.start_point, self.start_radius = self.voronoi.widest_gap()
@@ -494,6 +502,24 @@ class ToolPath:
 
         self.path_data: List[ArcData] = self._walk()
         self.joined_path_data: List[Union[ArcData, LineData]] = self._join_arcs()
+
+    def _validate_poly(self) -> None:
+        # TODO: This probably belongs in the Voronoi class.
+
+        fixed = make_valid(self.polygon)
+        while fixed.type == "MultiPolygon":
+            fixed = fixed.geoms[0]
+            fixed = make_valid(fixed)
+            # TODO: Should we just throw an exception here?
+            # The geometry is not valid. Knowing which piece to work on is a
+            # crap shoot.
+        if fixed.type == "Polygon":
+            self.polygon = fixed
+
+        # TODO: When an island touches the outer shape in more than one place,
+        # make_valid(...) will catch it.
+        # However when it touches in only one place, the voronoi diagram breaks.
+        # We should test for that and throw exception here.
 
     def _chose_path_remainder(
             self, closest: Optional[Tuple[float, float]] = None) -> Optional[Tuple[float, float]]:

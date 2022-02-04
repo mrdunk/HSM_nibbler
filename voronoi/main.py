@@ -79,9 +79,10 @@ def main(argv):
 
     for interior in shape.interiors:
         x, y = interior.xy
-        plt.plot(x, y, c="blue", linewidth=2)
+        plt.plot(x, y, c="orange", linewidth=2)
 
 
+    #"""
     tp = geometry.ToolPath(shape, 1, geometry.ArcDir.CW)
 
     for vertex, edges in tp.voronoi.vertex_to_edges.items():
@@ -92,7 +93,7 @@ def main(argv):
             for point in edge.coords:
                 x.append(point[0])
                 y.append(point[1])
-            #plt.plot(x, y, c="red", linewidth=2)
+            plt.plot(x, y, c="red", linewidth=2)
             #plt.plot(x[0], y[0], 'x', c="black")
 
     for element in tp.joined_path_data:
@@ -117,6 +118,7 @@ def main(argv):
                 plt.plot(x, y, c="orange", linewidth=1)
 
     plt.plot(tp.start_point.x, tp.start_point.y, 'o', c="black")
+    #"""
 
 
     plt.gca().set_aspect('equal')
