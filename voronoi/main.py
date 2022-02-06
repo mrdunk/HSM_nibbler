@@ -83,7 +83,7 @@ def main(argv):
 
 
     #"""
-    tp = geometry.ToolPath(shape, 1, geometry.ArcDir.CW)
+    tp = geometry.ToolPath(shape, .96, geometry.ArcDir.CW)
 
     for vertex, edges in tp.voronoi.vertex_to_edges.items():
         for edge_index in edges:
@@ -94,16 +94,16 @@ def main(argv):
                 x.append(point[0])
                 y.append(point[1])
             plt.plot(x, y, c="red", linewidth=2)
-            #plt.plot(x[0], y[0], 'x', c="black")
+            plt.plot(x[0], y[0], 'x', c="red")
+            plt.plot(x[-1], y[-1], 'x', c="red")
 
     for element in tp.joined_path_data:
         if type(element).__name__ == "Arc":
             x, y = element.path.xy
-            #if element.debug:
-            #    plt.plot(x, y, c="red", linewidth=1)
-            #else:
-            #    plt.plot(x, y, c="green", linewidth=1)
-            plt.plot(x, y, c="green", linewidth=1)
+            if element.debug:
+                plt.plot(x, y, c=element.debug, linewidth=1)
+            else:
+                plt.plot(x, y, c="green", linewidth=1)
 
             #print(round(element.start_angle, 2), round(element.span_angle, 2))
             #plt.plot(element.start.x, element.start.y, 'x', c="cyan")

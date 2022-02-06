@@ -77,7 +77,6 @@ def dxf_to_polygon(modelspace) -> Polygon:
 
     holes = []
     for ring in rings:
-        print(len(ring.coords), (ring is parent))
         if ring is not parent:
             holes.append(ring)
 
