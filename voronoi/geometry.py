@@ -12,6 +12,8 @@ import pyvoronoi
 
 Vertex = Tuple[float, float]
 
+DEBUG_LEVEL = 0
+
 # Number of tries before we give up trying to find a best-fit arc and just go
 # with the best we have found so far.
 ITERATION_COUNT = 50
@@ -49,12 +51,16 @@ class ArcDir(Enum):
     # Closest = 2  # TODO
 
 
+def log(text: str, level: int = 1):
+    if DEBUG_LEVEL >= level:
+        print(text)
+
 def timing(func):
     def wrap(*args, **kwargs):
         time1 = time.time()
         ret = func(*args, **kwargs)
         time2 = time.time()
-        print('{:s} function took {:.3f} ms'.format(func.__name__, (time2-time1)*1000.0))
+        log('{:s} function took {:.3f} ms'.format(func.__name__, (time2-time1)*1000.0))
 
         return ret
     return wrap
@@ -118,7 +124,7 @@ def create_arc_from_path(
     end = Point(path.coords[-1])
     mid = path.interpolate(0.5, normalized=True)
     radius = origin.distance(start)
-    #print(round(radius, 1), round(origin.distance(mid), 1), round(origin.distance(end), 1))
+    #log(round(radius, 1), round(origin.distance(mid), 1), round(origin.distance(end), 1))
     assert abs((origin.distance(mid) - radius) / radius) < 0.01
     assert abs((origin.distance(end) - radius) / radius) < 0.01
 
@@ -170,6 +176,7 @@ class Voronoi:
     @timing
     def __init__(self, polygon: Polygon, tolerence: float = 0) -> None:
         self.polygon = polygon
+        self._validate_poly()
         self.tolerence = tolerence
 
         self.max_dist = max((self.polygon.bounds[2] - self.polygon.bounds[0]),
@@ -177,7 +184,7 @@ class Voronoi:
 
         # Collect polygon segments to populate voronoi with.
         geom_primatives = []
-        outlines = [polygon.exterior] + list(polygon.interiors)
+        outlines = [self.polygon.exterior] + list(self.polygon.interiors)
         for outline in outlines:
             prev_point = None
             first_point = None
@@ -219,8 +226,8 @@ class Voronoi:
             start_vert = vertices[edge.start]
             end_vert = vertices[edge.end]
             if edge.twin and edge.is_primary:
-                if (Point(round_coord((start_vert.X, start_vert.Y))).intersects(polygon) and
-                        Point(round_coord((end_vert.X, end_vert.Y))).intersects(polygon)):
+                if (Point(round_coord((start_vert.X, start_vert.Y))).intersects(self.polygon) and
+                        Point(round_coord((end_vert.X, end_vert.Y))).intersects(self.polygon)):
                     if edge.is_linear:
                         line = LineString((
                             round_coord((start_vert.X, start_vert.Y)),
@@ -255,7 +262,7 @@ class Voronoi:
                             # A parabola between 2 lines (as opposed to 1 line and one point)
                             # leaves the DiscretizeCurvedEdge() function broken sometimes.
                             # Let's just assume a straight line edge in these cases.
-                            print("BORKED VORONOI", geom_points, geom_edges)
+                            log("BORKED VORONOI", geom_points, geom_edges)
                             line = LineString((
                                 round_coord((start_vert.X, start_vert.Y)),
                                 round_coord((end_vert.X, end_vert.Y))
@@ -299,6 +306,21 @@ class Voronoi:
                 assert edge_i in self.edges
                 vertices = self.edge_to_vertex[edge_i]
                 assert vertex in vertices
+
+    def _validate_poly(self) -> None:
+        fixed = make_valid(self.polygon)
+        while fixed.type == "MultiPolygon":
+            fixed = fixed.geoms[0]
+            fixed = make_valid(fixed)
+            # TODO: Should we just throw an exception here?
+            # The geometry is not valid. Knowing which piece to work on is a
+            # crap shoot.
+            # It should be up to the client code to make the decision and correctly
+            # format the input polygon.
+        if fixed.type == "Polygon":
+            self.polygon = fixed
+
+        self.polygon = self.polygon.simplify(0.1)
 
     def _store_edge(self, edge: LineString, replace_index=None) -> None:
         if edge.length == 0:
@@ -434,46 +456,32 @@ class Voronoi:
 class ToolPath:
     @timing
     def __init__(self, polygon: Polygon, step: float, winding_dir: ArcDir) -> None:
-        self.polygon: Polygon = polygon
         self.step: float = step
         self.winding_dir: ArcDir = winding_dir
 
-        self._validate_poly()
+        self.voronoi = Voronoi(polygon, tolerence = self.step)
+        self.polygon: Polygon = self.voronoi.polygon
+
 
         self.remainder: float = 0.0
         self.last_radius = None
-        self.voronoi = Voronoi(self.polygon, tolerence = self.step)
         self.start_point: Point
         self.start_radius: float
         self.start_point, self.start_radius = self.voronoi.widest_gap()
         self.cut_area_total = Polygon()
         self.last_circle: Optional[ArcData] = None
+
         self.arc_fail_count: int = 0
         self.path_fail_count: int = 0
         self.loop_count: int = 0
+        self.worst_oversize_arc: Tuple[float, float] = None
+        self.worst_undersize_arc: Tuple[float, float] = None
 
         self.visited_edges: Set[int] = set()
         self.open_paths = {}
 
         self.path_data: List[ArcData] = self._walk()
         self.joined_path_data: List[Union[ArcData, LineData]] = self._join_arcs()
-
-    def _validate_poly(self) -> None:
-        # TODO: This probably belongs in the Voronoi class.
-
-        fixed = make_valid(self.polygon)
-        while fixed.type == "MultiPolygon":
-            fixed = fixed.geoms[0]
-            fixed = make_valid(fixed)
-            # TODO: Should we just throw an exception here?
-            # The geometry is not valid. Knowing which piece to work on is a
-            # crap shoot.
-            # It should be up to the client code to make the decision and correctly
-            # format the input polygon.
-        if fixed.type == "Polygon":
-            self.polygon = fixed
-
-        self.polygon = self.polygon.simplify(0.1)
 
     def _chose_path_remainder(
             self, closest: Optional[Tuple[float, float]] = None) -> Optional[Tuple[float, float]]:
@@ -709,7 +717,7 @@ class ToolPath:
         best_progress: float = 0.0
         best_distance: float = 0.0
         dist_offset: int = 100000
-        log = ""
+        log_arc = ""
 
         # Extrapolate line beyond it's actual distance to give the PID algorithm
         # room to overshoot while converging on an optimal position for the new arc.
@@ -769,10 +777,10 @@ class ToolPath:
             modifier = pid.send((desired_step, progress))
             distance += modifier
 
-            #log += f"\t{start_distance}\t{distance=}\t{progress=}\t{best_progress=}\t{modifier=}\n"
+            #log_arc += f"\t{start_distance}\t{distance=}\t{progress=}\t{best_progress=}\t{modifier=}\n"
 
-        log += f"\t{progress=}\t{best_progress=}\t{best_distance=}\t{voronoi_edge.length=}\n"
-        log += "\t--------"
+        log_arc += f"\t{progress=}\t{best_progress=}\t{best_distance=}\t{voronoi_edge.length=}\n"
+        log_arc += "\t--------"
 
         if best_distance > voronoi_edge.length:
             if abs(voronoi_edge.length - best_distance) < desired_step / 20:
@@ -791,13 +799,23 @@ class ToolPath:
         distance_remain = voronoi_edge.length - distance
         if count == ITERATION_COUNT:
             self.arc_fail_count += 1
-            print("\tDid not find an arc that fits. Spacing/Desired: "
+            log("\tDid not find an arc that fits. Spacing/Desired: "
                     f"{round(progress, 3)}/{desired_step}"
                     "\tdistance remaining: "
                     f"{round(distance_remain, 3)}")
+            if progress < desired_step:
+                if (self.worst_undersize_arc is None or
+                        abs(progress - desired_step) >
+                        abs(self.worst_undersize_arc[0] - self.worst_undersize_arc[1])):
+                    self.worst_undersize_arc = (progress, desired_step)
+            if progress > desired_step:
+                if (self.worst_oversize_arc is None or
+                        abs(progress - desired_step) >
+                        abs(self.worst_oversize_arc[0] - self.worst_oversize_arc[1])):
+                    self.worst_oversize_arc = (progress, desired_step)
 
         if count == ITERATION_COUNT or debug:
-            print(log)
+            log(log_arc)
 
         self.loop_count += count
 
@@ -868,22 +886,20 @@ class ToolPath:
         path_data: List[ArcData] = []
         start_vertex: Optional[Tuple[float, float]] = self.start_point.coords[0]
 
-        path_count = 0
         while start_vertex is not None:
             combined_edge = self._join_branches(start_vertex)
             if not combined_edge:
                 start_vertex = self._chose_path_remainder()
                 continue
 
-            path_count += 1
-            print(f"_walk\t{start_vertex}\t{combined_edge.length=}")
+            log(f"_walk\t{start_vertex}\t{combined_edge.length=}")
 
             dist = 0.0
             stuck_count = int(combined_edge.length * 10 / self.step + 10)
             closest = 2 * combined_edge.length
             while dist < combined_edge.length and stuck_count:
                 if stuck_count % 100 == 1:
-                    print(stuck_count)
+                    log(stuck_count)
                 stuck_count -= 1
                 dist, arcs = self._calculate_arc(combined_edge, dist)
 
@@ -895,15 +911,15 @@ class ToolPath:
                 path_data += arcs
 
             if stuck_count <= 0:
-                print(f"stuck: {round(dist, 2)} / {round(combined_edge.length, 2)}")
+                log(f"stuck: {round(dist, 2)} / {round(combined_edge.length, 2)}")
                 self.path_fail_count += 1
 
             start_vertex = self._chose_path_remainder(combined_edge.coords[-1])
 
-        assert self.visited_edges == set(self.voronoi.edges.keys())
+        #assert self.visited_edges == set(self.voronoi.edges.keys())
         assert not self.open_paths
-        print(f"{self.arc_fail_count=}\t {self.loop_count=}")
-        print(f"{self.path_fail_count=}\t {path_count}")
+        log(f"{self.arc_fail_count=}\t {self.loop_count=}")
+        log(f"{self.path_fail_count=}")
         return path_data
 
     @timing

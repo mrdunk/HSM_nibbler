@@ -68,7 +68,6 @@ def dxf_to_polygon(modelspace) -> Polygon:
             rings.append(polyline_to_linestring(entity))
         else:
             print(f"Unsupported dxf entity: {entity.dxftype()}")
-            #assert False
 
     parent = None
     for ring in rings:
