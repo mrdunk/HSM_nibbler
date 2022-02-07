@@ -8,7 +8,6 @@ from shapely.geometry import LineString, MultiLineString, Point, Polygon
 from shapely.ops import linemerge, nearest_points
 from shapely.validation import make_valid
 
-import matplotlib.pyplot as plt
 import pyvoronoi
 
 Vertex = Tuple[float, float]
@@ -273,7 +272,7 @@ class Voronoi:
         self._drop_irrelevant_edges()
         self._combine_edges([widest_point.coords[0]])
 
-        self._check_data()
+        #self._check_data()
 
     def _check_data(self) -> None:
         """ Sanity check data structures. """
@@ -449,7 +448,8 @@ class ToolPath:
         self.start_point, self.start_radius = self.voronoi.widest_gap()
         self.cut_area_total = Polygon()
         self.last_circle: Optional[ArcData] = None
-        self.fail_count: int = 0
+        self.arc_fail_count: int = 0
+        self.path_fail_count: int = 0
         self.loop_count: int = 0
 
         self.visited_edges: Set[int] = set()
@@ -790,7 +790,7 @@ class ToolPath:
 
         distance_remain = voronoi_edge.length - distance
         if count == ITERATION_COUNT:
-            self.fail_count += 1
+            self.arc_fail_count += 1
             print("\tDid not find an arc that fits. Spacing/Desired: "
                     f"{round(progress, 3)}/{desired_step}"
                     "\tdistance remaining: "
@@ -868,12 +868,14 @@ class ToolPath:
         path_data: List[ArcData] = []
         start_vertex: Optional[Tuple[float, float]] = self.start_point.coords[0]
 
+        path_count = 0
         while start_vertex is not None:
             combined_edge = self._join_branches(start_vertex)
             if not combined_edge:
                 start_vertex = self._chose_path_remainder()
                 continue
 
+            path_count += 1
             print(f"_walk\t{start_vertex}\t{combined_edge.length=}")
 
             dist = 0.0
@@ -894,12 +896,14 @@ class ToolPath:
 
             if stuck_count <= 0:
                 print(f"stuck: {round(dist, 2)} / {round(combined_edge.length, 2)}")
+                self.path_fail_count += 1
 
             start_vertex = self._chose_path_remainder(combined_edge.coords[-1])
 
-        print("Sets match:", self.visited_edges == set(self.voronoi.edges.keys()))
-        print("Unvisited paths:", self.open_paths)
-        print(f"{self.fail_count=}\t {self.loop_count=}")
+        assert self.visited_edges == set(self.voronoi.edges.keys())
+        assert not self.open_paths
+        print(f"{self.arc_fail_count=}\t {self.loop_count=}")
+        print(f"{self.path_fail_count=}\t {path_count}")
         return path_data
 
     @timing
