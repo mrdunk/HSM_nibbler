@@ -7,6 +7,7 @@ Run code against .dxf test patterns.
 from typing import NamedTuple, Tuple
 
 from glob import glob
+import signal
 import sys
 from tabulate import tabulate
 import time
@@ -15,6 +16,8 @@ import ezdxf
 
 import dxf
 import geometry
+
+break_count: int = 0
 
 Result = NamedTuple("Result", [
     ("filename", str),
@@ -30,6 +33,13 @@ Result = NamedTuple("Result", [
     ("worst_undersize_arc", Tuple[float, float]),
     ("worst_oversize_arc", Tuple[float, float]),
     ])
+
+def signal_handler(sig, frame):
+    global break_count
+    break_count += 1
+    if break_count >= 2:
+        sys.exit(0)
+    print('Ctrl+C pressed. Finishing existing test. Ctrl+C again to quit immediately.')
 
 def describe():
     print("uncut_area:")
@@ -117,6 +127,8 @@ def test_file(filepath: str, overlap: float, winding: geometry.ArcDir) -> Result
             ) 
 
 def main(argv):
+    signal.signal(signal.SIGINT, signal_handler)
+
     path = "../**/*.dxf"
     if len(argv) >= 2:
         path = argv[1]
@@ -143,6 +155,13 @@ def main(argv):
                     print(error)
                     print(f"during: {filepath}\t{overlap}\t{winding}")
                     raise error
+
+                if break_count:
+                    break
+            if break_count:
+                break
+        if break_count:
+            break
     describe()
     print(tabulate(results, headers="keys"))
 

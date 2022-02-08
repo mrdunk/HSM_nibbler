@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """ Experimenting with CNC machining toolpaths. """
 
-import random
 import sys
 
 import ezdxf
@@ -39,7 +38,7 @@ def print_entity(entity: ezdxf.entities.DXFGraphic, indent: int = 0):
 def main(argv):
     if len(argv) < 2:
         print("Incorrect command line arguments.")
-        print(f"Use:\n   {argv[0]} FILENAME [RANDOM_SEED]")
+        print(f"Use:\n   {argv[0]} FILENAME [STEP_sIZE]")
         sys.exit(0)
     filename = argv[1]
 
@@ -52,18 +51,12 @@ def main(argv):
         print(f'Invalid or corrupted DXF file.')
         sys.exit(3)
 
-    random_seed = None
     if len(argv) > 2:
-        random_seed = argv[2]
-        if random_seed.startswith("random_seed="):
-            random_seed = random_seed.split("=")[1]
-        random_seed = int(random_seed)
+        step_size = int(argv[2])
     else:
-        random_seed = random.randint(1, 999999)
+        step_size = 1
 
-    random.seed(random_seed)
-
-    print(f"{filename=}\n{random_seed=}\n")
+    print(f"{filename=}\n{step_size=}\n")
 
     modelspace = dxf_data.modelspace()
 
@@ -82,8 +75,7 @@ def main(argv):
         plt.plot(x, y, c="orange", linewidth=2)
 
 
-    #"""
-    tp = geometry.ToolPath(shape, .96, geometry.ArcDir.CW)
+    tp = geometry.ToolPath(shape, step_size, geometry.ArcDir.CW)
 
     for vertex, edges in tp.voronoi.vertex_to_edges.items():
         for edge_index in edges:
@@ -110,15 +102,15 @@ def main(argv):
             #plt.plot(element.end.x, element.end.y, 'x', c="orange")
 
         elif type(element).__name__ == "Line":
-            continue
+            #continue
             x, y = element.path.xy
             if element.safe:
-                plt.plot(x, y, linestyle='--', c="purple", linewidth=1)
+                #plt.plot(x, y, linestyle='--', c="purple", linewidth=1)
+                pass
             else:
                 plt.plot(x, y, c="orange", linewidth=1)
 
     plt.plot(tp.start_point.x, tp.start_point.y, 'o', c="black")
-    #"""
 
 
     plt.gca().set_aspect('equal')

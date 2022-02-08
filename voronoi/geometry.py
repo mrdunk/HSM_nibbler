@@ -30,7 +30,7 @@ ROUND_DP = 4
 
 # Resolution of voronoi algorithm.
 # See C++ Boost documentation.
-#VORONOI_RES = 10000000
+# Set it to 1 better than the geometry resolution.
 VORONOI_RES = 10**(ROUND_DP + 1)
 
 # When arc sizes drop below a certain point, we need to reduce the step size or
@@ -44,6 +44,9 @@ CORNER_ZOOM = 0
 CORNER_ZOOM_EFFECT = 0.75
 #CORNER_ZOOM_EFFECT = 3
 
+
+# A tiny number for comparing things that should touch if not for floating-point error.
+EPS = 5.96e-08
 
 class ArcDir(Enum):
     CW = 0
@@ -81,7 +84,7 @@ ArcData = NamedTuple("Arc", [
     # TODO: ("end_DOC", float),
     # TODO: ("widest_DOC", float),
     ("path", LineString),
-    ("debug", str)
+    ("debug", Optional[str])
     ])
 
 LineData = NamedTuple("Line", [
@@ -124,7 +127,6 @@ def create_arc_from_path(
     end = Point(path.coords[-1])
     mid = path.interpolate(0.5, normalized=True)
     radius = origin.distance(start)
-    #log(round(radius, 1), round(origin.distance(mid), 1), round(origin.distance(end), 1))
     assert abs((origin.distance(mid) - radius) / radius) < 0.01
     assert abs((origin.distance(end) - radius) / radius) < 0.01
 
@@ -226,8 +228,10 @@ class Voronoi:
             start_vert = vertices[edge.start]
             end_vert = vertices[edge.end]
             if edge.twin and edge.is_primary:
-                if (Point(round_coord((start_vert.X, start_vert.Y))).intersects(self.polygon) and
-                        Point(round_coord((end_vert.X, end_vert.Y))).intersects(self.polygon)):
+                p_start = Point(round_coord((start_vert.X, start_vert.Y)))
+                p_end = Point(round_coord((end_vert.X, end_vert.Y)))
+                if (p_start.distance(self.polygon) <= EPS and
+                        p_end.distance(self.polygon) <= EPS):
                     if edge.is_linear:
                         line = LineString((
                             round_coord((start_vert.X, start_vert.Y)),
@@ -262,7 +266,7 @@ class Voronoi:
                             # A parabola between 2 lines (as opposed to 1 line and one point)
                             # leaves the DiscretizeCurvedEdge() function broken sometimes.
                             # Let's just assume a straight line edge in these cases.
-                            log("BORKED VORONOI", geom_points, geom_edges)
+                            log(f"BORKED VORONOI: \t{geom_points=}\t{geom_edges=}")
                             line = LineString((
                                 round_coord((start_vert.X, start_vert.Y)),
                                 round_coord((end_vert.X, end_vert.Y))
@@ -416,13 +420,13 @@ class Voronoi:
             if len(neibours_a) == 1:
                 if abs(self.distance_from_geom(Point(vert_b)) - edge.length) < self.tolerence / 2:
                     to_prune.add(index)
-                if edge.length < self.tolerence:
-                    to_prune.add(index)
+                #if edge.length < self.tolerence:
+                #    to_prune.add(index)
             if len(neibours_b) == 1:
                 if abs(self.distance_from_geom(Point(vert_a)) - edge.length) < self.tolerence / 2:
                     to_prune.add(index)
-                if edge.length < self.tolerence:
-                    to_prune.add(index)
+                #if edge.length < self.tolerence:
+                #    to_prune.add(index)
 
         for index in to_prune:
             self._remove_edge(index)
@@ -455,14 +459,25 @@ class Voronoi:
 
 class ToolPath:
     @timing
-    def __init__(self, polygon: Polygon, step: float, winding_dir: ArcDir) -> None:
+    def __init__(
+            self,
+            polygon: Polygon,
+            step: float,
+            winding_dir: ArcDir,
+            voronoi: Optional[Voronoi] = None
+            ) -> None:
         self.step: float = step
         self.winding_dir: ArcDir = winding_dir
 
-        self.voronoi = Voronoi(polygon, tolerence = self.step)
+        if voronoi is None:
+            self.voronoi = Voronoi(polygon, tolerence = self.step)
+        else:
+            self.voronoi = voronoi
         self.polygon: Polygon = self.voronoi.polygon
 
+        self.calculate_path()
 
+    def calculate_path(self) -> None:
         self.remainder: float = 0.0
         self.last_radius = None
         self.start_point: Point
@@ -474,11 +489,11 @@ class ToolPath:
         self.arc_fail_count: int = 0
         self.path_fail_count: int = 0
         self.loop_count: int = 0
-        self.worst_oversize_arc: Tuple[float, float] = None
-        self.worst_undersize_arc: Tuple[float, float] = None
+        self.worst_oversize_arc: Optional[Tuple[float, float]] = None
+        self.worst_undersize_arc: Optional[Tuple[float, float]] = None
 
         self.visited_edges: Set[int] = set()
-        self.open_paths = {}
+        self.open_paths: Dict[int, Tuple[float, float]] = {}
 
         self.path_data: List[ArcData] = self._walk()
         self.joined_path_data: List[Union[ArcData, LineData]] = self._join_arcs()
@@ -898,8 +913,6 @@ class ToolPath:
             stuck_count = int(combined_edge.length * 10 / self.step + 10)
             closest = 2 * combined_edge.length
             while dist < combined_edge.length and stuck_count:
-                if stuck_count % 100 == 1:
-                    log(stuck_count)
                 stuck_count -= 1
                 dist, arcs = self._calculate_arc(combined_edge, dist)
 
