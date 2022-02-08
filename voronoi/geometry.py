@@ -324,7 +324,7 @@ class Voronoi:
         if fixed.type == "Polygon":
             self.polygon = fixed
 
-        self.polygon = self.polygon.simplify(0.1)
+        self.polygon = self.polygon.simplify(0.2)
 
     def _store_edge(self, edge: LineString, replace_index=None) -> None:
         if edge.length == 0:
