@@ -75,7 +75,9 @@ def main(argv):
         plt.plot(x, y, c="orange", linewidth=2)
 
 
-    tp = geometry.ToolPath(shape, step_size, geometry.ArcDir.CW)
+    tp = geometry.ToolPath(shape, step_size, geometry.ArcDir.CW, generate = True)
+    for index, value in enumerate(tp._get_arcs(10)):
+        print(index, value)
 
     for vertex, edges in tp.voronoi.vertex_to_edges.items():
         for edge_index in edges:
@@ -89,7 +91,7 @@ def main(argv):
             plt.plot(x[0], y[0], 'x', c="red")
             plt.plot(x[-1], y[-1], 'x', c="red")
     #"""
-    for element in tp.joined_path_data:
+    for element in tp.path:
         if type(element).__name__ == "Arc":
             x, y = element.path.xy
             if element.debug:
