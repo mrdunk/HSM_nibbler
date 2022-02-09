@@ -199,8 +199,7 @@ class Voronoi:
                 else:
                     geom_primatives.append((prev_point, point))
                     prev_point = point
-            if prev_point != first_point:
-                geom_primatives.append((prev_point, first_point))
+            assert prev_point == first_point  # This is a loop.
 
         # Generate voronoi diagram.
         pv = pyvoronoi.Pyvoronoi(VORONOI_RES)
@@ -324,7 +323,7 @@ class Voronoi:
         if fixed.type == "Polygon":
             self.polygon = fixed
 
-        self.polygon = self.polygon.simplify(0.2)
+        self.polygon = self.polygon.simplify(0.05)
 
     def _store_edge(self, edge: LineString, replace_index=None) -> None:
         if edge.length == 0:
@@ -420,13 +419,13 @@ class Voronoi:
             if len(neibours_a) == 1:
                 if abs(self.distance_from_geom(Point(vert_b)) - edge.length) < self.tolerence / 2:
                     to_prune.add(index)
-                #if edge.length < self.tolerence:
-                #    to_prune.add(index)
+                if edge.length < self.tolerence:
+                    to_prune.add(index)
             if len(neibours_b) == 1:
                 if abs(self.distance_from_geom(Point(vert_a)) - edge.length) < self.tolerence / 2:
                     to_prune.add(index)
-                #if edge.length < self.tolerence:
-                #    to_prune.add(index)
+                if edge.length < self.tolerence:
+                    to_prune.add(index)
 
         for index in to_prune:
             self._remove_edge(index)
@@ -483,8 +482,11 @@ class ToolPath:
         self.start_point: Point
         self.start_radius: float
         self.start_point, self.start_radius = self.voronoi.widest_gap()
-        self.cut_area_total = Polygon()
-        self.last_circle: Optional[ArcData] = None
+
+        # Assume starting circle is already cut.
+        self.last_circle: Optional[ArcData] = create_circle(
+                self.start_point, self.start_radius, self.winding_dir)
+        self.cut_area_total = Polygon(self.last_circle.path)
 
         self.arc_fail_count: int = 0
         self.path_fail_count: int = 0
@@ -798,7 +800,8 @@ class ToolPath:
         log_arc += "\t--------"
 
         if best_distance > voronoi_edge.length:
-            if abs(voronoi_edge.length - best_distance) < desired_step / 20:
+            #if abs(voronoi_edge.length - best_distance) < desired_step / 20:
+            if best_progress < desired_step / 20:
                 # Ignore trivial edge ends.
                 return (distance, [])
             best_distance = voronoi_edge.length
@@ -931,7 +934,9 @@ class ToolPath:
 
         #assert self.visited_edges == set(self.voronoi.edges.keys())
         assert not self.open_paths
-        log(f"{self.arc_fail_count=}\t {self.loop_count=}")
+        log(f"{self.loop_count=}")
+        log(f"{self.arc_fail_count=}")
+        log(f"{len(path_data)=}")
         log(f"{self.path_fail_count=}")
         return path_data
 

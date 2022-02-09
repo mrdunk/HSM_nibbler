@@ -52,7 +52,7 @@ def main(argv):
         sys.exit(3)
 
     if len(argv) > 2:
-        step_size = int(argv[2])
+        step_size = float(argv[2])
     else:
         step_size = 1
 
@@ -88,7 +88,7 @@ def main(argv):
             plt.plot(x, y, c="red", linewidth=2)
             plt.plot(x[0], y[0], 'x', c="red")
             plt.plot(x[-1], y[-1], 'x', c="red")
-
+    #"""
     for element in tp.joined_path_data:
         if type(element).__name__ == "Arc":
             x, y = element.path.xy
@@ -111,7 +111,7 @@ def main(argv):
                 plt.plot(x, y, c="orange", linewidth=1)
 
     plt.plot(tp.start_point.x, tp.start_point.y, 'o', c="black")
-
+    #"""
 
     plt.gca().set_aspect('equal')
     plt.show()

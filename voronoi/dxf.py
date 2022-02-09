@@ -8,7 +8,14 @@ from ezdxf.entities.lwpolyline import LWPolyline as DxfPolyline
 from ezdxf.query import EntityQuery as DxfPolylines
 from shapely.geometry import LineString, MultiLineString, Point, Polygon, LinearRing, MultiPoint
 
-CIRCLE_RES = 64
+CIRCLE_RES = 500
+DP = 2
+
+def round_points(points):
+    """ Used in testing. Clamps points to rounded coordinates. """
+    if not DP:
+        return points
+    return [(round(point[0], DP), round(point[1], DP)) for point in points]
 
 def weighted(p1, p2, alpha):
     return p1[0] + (p2[0] - p1[0]) * alpha, p1[1] + (p2[1] - p1[1]) * alpha
@@ -50,7 +57,7 @@ def polyline_to_linestring(entity) -> LineString:
             cy = my + c * cos(angle)
             sa = atan2(lasty - cy, lastx - cx)
             ea = sa + theta
-            points += circle(cx, cy, r, CIRCLE_RES, sa, ea)
+            points += round_points(circle(cx, cy, r, CIRCLE_RES, sa, ea))
             points.append((x, y))
         else:
             points.append((x, y))
