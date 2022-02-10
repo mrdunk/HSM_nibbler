@@ -479,13 +479,16 @@ class ToolPath:
                 multiplier = (CORNER_ZOOM - radius) / CORNER_ZOOM
                 desired_step = self.step - CORNER_ZOOM_EFFECT * multiplier
 
-            if (abs(desired_step - progress) < abs(desired_step - best_progress)):
+            if (abs(desired_step - progress) < abs(desired_step - best_progress)
+                    and distance > 0):
                 # Better fit.
                 best_progress = progress
                 best_distance = distance
 
                 if abs(desired_step - progress) < desired_step / 20:
                     # Good enough fit.
+                    best_progress = progress
+                    best_distance = distance
                     break
 
             modifier = pid.send((desired_step, progress))
