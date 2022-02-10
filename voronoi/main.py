@@ -67,6 +67,7 @@ def main(argv):
 
     shape = dxf.dxf_to_polygon(modelspace)
 
+    # Display shape to be cut
     x, y = shape.exterior.xy
     plt.plot(x, y, c="blue", linewidth=2)
 
@@ -74,14 +75,19 @@ def main(argv):
         x, y = interior.xy
         plt.plot(x, y, c="orange", linewidth=2)
 
+    # Generate tool path.
+    toolpath = geometry.ToolPath(shape, step_size, geometry.ArcDir.CW, generate = True)
+    timeslice = 20  # ms
+    for index, arc_count in enumerate(toolpath._get_arcs(timeslice)):
+        print(index, arc_count)
+        # You have access to toolpath.path here.
+        # Draw what's there so far; it will ot change position in the buffer.
+    # Call toolpath.calculate_path() to scrap the existing and regenerate toolpath.
 
-    tp = geometry.ToolPath(shape, step_size, geometry.ArcDir.CW, generate = True)
-    for index, value in enumerate(tp._get_arcs(10)):
-        print(index, value)
-
-    for vertex, edges in tp.voronoi.vertex_to_edges.items():
+    # Display voronoi edges.
+    for vertex, edges in toolpath.voronoi.vertex_to_edges.items():
         for edge_index in edges:
-            edge = tp.voronoi.edges[edge_index]
+            edge = toolpath.voronoi.edges[edge_index]
             x = []
             y = []
             for point in edge.coords:
@@ -90,18 +96,15 @@ def main(argv):
             plt.plot(x, y, c="red", linewidth=2)
             plt.plot(x[0], y[0], 'x', c="red")
             plt.plot(x[-1], y[-1], 'x', c="red")
-    #"""
-    for element in tp.path:
+
+    # Display path.
+    for element in toolpath.path:
         if type(element).__name__ == "Arc":
             x, y = element.path.xy
             if element.debug:
                 plt.plot(x, y, c=element.debug, linewidth=1)
             else:
                 plt.plot(x, y, c="green", linewidth=1)
-
-            #print(round(element.start_angle, 2), round(element.span_angle, 2))
-            #plt.plot(element.start.x, element.start.y, 'x', c="cyan")
-            #plt.plot(element.end.x, element.end.y, 'x', c="orange")
 
         elif type(element).__name__ == "Line":
             #continue
@@ -112,8 +115,7 @@ def main(argv):
             else:
                 plt.plot(x, y, c="orange", linewidth=1)
 
-    plt.plot(tp.start_point.x, tp.start_point.y, 'o', c="black")
-    #"""
+    plt.plot(toolpath.start_point.x, toolpath.start_point.y, 'o', c="black")
 
     plt.gca().set_aspect('equal')
     plt.show()

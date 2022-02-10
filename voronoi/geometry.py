@@ -180,15 +180,8 @@ class ToolPath:
 
         self.calculate_path()
 
-    #def __iter__(self):
-    #    self.counter = 0
-    #    return self
-
-    #def __next__(self):
-    #    self.counter += 1
-    #    return self.counter
-
     def _reset(self) -> None:
+        """ Cleanup and/or initialise everything. """
         self.remainder: float = 0.0
         self.last_radius = None
         self.start_point: Point
@@ -213,10 +206,12 @@ class ToolPath:
         self.joined_path_data = self.path  # TODO: Deprecated.
 
     def calculate_path(self) -> None:
+        """ Reset path and restart from beginning. """
         self._reset()
         
         # Create the generator.
         generator = self._get_arcs()
+
         if not self.generate:
             # Don't want to use it as a generator so set it running.
             try:

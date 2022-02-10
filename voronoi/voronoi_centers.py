@@ -14,7 +14,7 @@ except ImportError:
 Vertex = Tuple[float, float]
 
 # Number of decimal places resolution for coordinates.
-ROUND_DP = 4
+ROUND_DP = 5
 
 # Resolution of voronoi algorithm.
 # See C++ Boost documentation.
