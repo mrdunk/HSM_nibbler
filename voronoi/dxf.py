@@ -9,7 +9,7 @@ from ezdxf.query import EntityQuery as DxfPolylines
 from shapely.geometry import LineString, MultiLineString, Point, Polygon, LinearRing, MultiPoint
 
 CIRCLE_RES = 500
-DP = 2
+DP = 0
 
 def round_points(points):
     """ Used in testing. Clamps points to rounded coordinates. """

@@ -22,8 +22,8 @@ ROUND_DP = 5
 VORONOI_RES = 10**(ROUND_DP + 1)
 
 # A tiny number for comparing things that should touch if not for floating-point error.
-EPS = 5.96e-08
-
+#EPS = 5.96e-08
+EPS = 1 / (10 ** ROUND_DP)
 
 def round_coord(value: Tuple[float, float]) -> Tuple[float, float]:
     return (round(value[0], ROUND_DP), round(value[1], ROUND_DP))

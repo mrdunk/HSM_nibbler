@@ -88,14 +88,18 @@ def test_file(filepath: str, overlap: float, winding: geometry.ArcDir) -> Result
     toolpath = geometry.ToolPath(shape, overlap, winding)
     time_run -= time.time()
 
-    polygon_remaining = toolpath.polygon.difference(toolpath.cut_area_total)
-    polygon_erroded = polygon_remaining.buffer(-overlap / 2)
+    #polygon_remaining = toolpath.polygon.difference(toolpath.cut_area_total)
+    #polygon_erroded = polygon_remaining.buffer(-overlap / 2.0)
+    path_dilated = toolpath.cut_area_total.buffer(overlap)
+    polygon_remaining = toolpath.polygon.difference(path_dilated)
 
     polygon_area = round(toolpath.polygon.area, 4)
-    uncut_area = round(polygon_erroded.area, 4)
-    uncut_ratio = round(uncut_area/polygon_area, 4)
+    #uncut_area = round(polygon_erroded.area, 4)
+    #uncut_ratio = round(uncut_area/polygon_area, 4)
+    uncut_area = round(polygon_remaining.area, 4)
+    uncut_ratio = round(polygon_remaining.area/polygon_area, 4)
 
-    arc_count = len(toolpath.path_data)
+    arc_count = len(toolpath.path)
     if arc_count:
         arc_attempt_ratio = round(toolpath.loop_count / arc_count, 4)
         arc_fail_ratio = round(toolpath.arc_fail_count / arc_count, 4)

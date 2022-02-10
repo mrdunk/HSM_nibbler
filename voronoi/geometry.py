@@ -111,8 +111,8 @@ def create_arc_from_path(
     end = Point(path.coords[-1])
     mid = path.interpolate(0.5, normalized=True)
     radius = origin.distance(start)
-    assert abs((origin.distance(mid) - radius) / radius) < 0.01
-    assert abs((origin.distance(end) - radius) / radius) < 0.01
+    #assert abs((origin.distance(mid) - radius) / radius) < 0.01
+    #assert abs((origin.distance(end) - radius) / radius) < 0.01
 
     start_angle = math.atan2(start.x - origin.x, start.y - origin.y)
     end_angle = math.atan2(end.x - origin.x, end.y - origin.y)
@@ -337,18 +337,19 @@ class ToolPath:
 
         return (pos, radius)
 
-    @classmethod
-    def _furthest_spacing_arcs(cls, arcs: List[ArcData], last_circle: ArcData) -> float:
+    def _furthest_spacing_arcs(self, arcs: List[ArcData], last_circle: ArcData) -> float:
         """
         Calculate maximum step_over between 2 arcs.
         """
-        #return self._furthest_spacing_shapely(arcs, Polygon(last_circle.path))
+        return self._furthest_spacing_shapely(arcs, Polygon(last_circle.path))
 
+        # TODO: Can i fix the following?
         spacing = -1
 
         for arc in arcs:
             spacing = max(spacing,
                     last_circle.origin.hausdorff_distance(arc.path) - last_circle.radius)
+                    #arc.path.hausdorff_distance(last_circle.origin) - last_circle.radius)
         return spacing
 
     @classmethod
@@ -368,7 +369,7 @@ class ToolPath:
         Returns:
             The step distance.
         """
-        spacing = 0
+        spacing = -1
         polygon = previous
         for arc in arcs:
             # This is expensive but yields good results.
@@ -439,7 +440,7 @@ class ToolPath:
         count: int = 0
         circle: Optional[ArcData] = None
         arcs: List[ArcData] = []
-        progress: float = 1.0
+        progress: float = 0.0
         best_progress: float = 0.0
         best_distance: float = 0.0
         dist_offset: int = 100000
@@ -449,6 +450,8 @@ class ToolPath:
         # room to overshoot while converging on an optimal position for the new arc.
         edge_extended: LineString = self._extrapolate_line(dist_offset, voronoi_edge)
         assert abs(edge_extended.length - (voronoi_edge.length + 2 * dist_offset)) < 0.0001
+
+        assert self.cut_area_total
 
         # Loop multiple times, trying to converge on a distance along the voronoi
         # edge that provides the correct step size.
@@ -461,6 +464,7 @@ class ToolPath:
                 # The voronoi edge has met the part geometry.
                 # Nothing more to do.
                 return (distance, [])
+
             circle = create_circle(pos, radius, self.winding_dir)
 
             # Compare proposed arc to cut area.
@@ -471,11 +475,6 @@ class ToolPath:
                 # arc is entirely hidden by previous cut geometry.
                 # Nothing more to do here.
                 return (voronoi_edge.length, [])
-
-            if not self.cut_area_total:
-                # The very first circle in the whole path.
-                # No calculation required. Just draw it.
-                break
 
             # Progress is measured as the furthest point he proposed arc is
             # from the previous one. We are aiming for proposed == desired_step.
@@ -492,7 +491,8 @@ class ToolPath:
                 desired_step = self.step - CORNER_ZOOM_EFFECT * multiplier
 
             if (abs(desired_step - progress) < abs(desired_step - best_progress) and
-                    distance > 0 and best_distance <= voronoi_edge.length):
+                    distance > 0 and (progress <= desired_step or best_progress == 0)):
+                # and best_distance <= voronoi_edge.length):
                 best_progress = progress
                 best_distance = distance
 
@@ -643,7 +643,7 @@ class ToolPath:
 
             dist = 0.0
             stuck_count = int(combined_edge.length * 10 / self.step + 10)
-            while dist < combined_edge.length and stuck_count:
+            while dist < combined_edge.length and stuck_count > 0:
                 stuck_count -= 1
                 dist, sub_arcs = self._calculate_arc(combined_edge, dist)
 
@@ -658,9 +658,11 @@ class ToolPath:
                         yield len(self.path)
                         start_time = round(time.time() * 1000)  # (ms)
 
+            self._arcs_to_path(arcs)
+
             if stuck_count <= 0:
                 # TODO: No evidence of this happening for a while. Remove it?
-                log(f"stuck: {round(dist, 2)} / {round(combined_edge.length, 2)}")
+                print(f"stuck: {round(dist, 2)} / {round(combined_edge.length, 2)}")
                 self.path_fail_count += 1
 
             start_vertex = self._chose_path_remainder(combined_edge.coords[-1])
