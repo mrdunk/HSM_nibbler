@@ -375,14 +375,9 @@ class ToolPath:
             # This is expensive but yields good results.
             # Probably want to do a binary search version?
 
-            #for index in range(0, len(arc.path.coords), 1):
-            #    coord = arc.path.coords[index]
-            #    spacing = max(spacing, Point(coord).distance(polygon))
-
-            for progress in range(32):
-                spacing = max(
-                        spacing,
-                        arc.path.interpolate(float(progress) / 32, True).distance(polygon))
+            for index in range(0, len(arc.path.coords), 1):
+                coord = arc.path.coords[index]
+                spacing = max(spacing, Point(coord).distance(polygon))
 
         return spacing
 
@@ -460,11 +455,6 @@ class ToolPath:
 
             # Propose an arc.
             pos, radius = self._arc_at_distance(distance + dist_offset, edge_extended)
-            if radius <= 0:
-                # The voronoi edge has met the part geometry.
-                # Nothing more to do.
-                return (distance, [])
-
             circle = create_circle(pos, radius, self.winding_dir)
 
             # Compare proposed arc to cut area.
@@ -486,19 +476,17 @@ class ToolPath:
             desired_step = self.step
             if radius < CORNER_ZOOM:
                 # Limit step size as the arc radius gets very small.
-                #plt.plot(pos.x, pos.y, 'x', c="black")
                 multiplier = (CORNER_ZOOM - radius) / CORNER_ZOOM
                 desired_step = self.step - CORNER_ZOOM_EFFECT * multiplier
 
-            if (abs(desired_step - progress) < abs(desired_step - best_progress) and
-                    distance > 0 and (progress <= desired_step or best_progress == 0)):
-                # and best_distance <= voronoi_edge.length):
+            if (abs(desired_step - progress) < abs(desired_step - best_progress)):
+                # Better fit.
                 best_progress = progress
                 best_distance = distance
 
-            if abs(desired_step - progress) < desired_step / 20:
-                # Good enough fit.
-                break
+                if abs(desired_step - progress) < desired_step / 20:
+                    # Good enough fit.
+                    break
 
             modifier = pid.send((desired_step, progress))
             distance += modifier
@@ -515,7 +503,7 @@ class ToolPath:
                 return (distance, [])
             best_distance = voronoi_edge.length
 
-        if distance != best_distance:
+        if distance != best_distance or progress != best_progress:
             distance = best_distance
             progress = best_progress
             pos, radius = self._arc_at_distance(distance + dist_offset, edge_extended)

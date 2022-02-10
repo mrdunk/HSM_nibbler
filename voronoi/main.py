@@ -79,10 +79,12 @@ def main(argv):
     toolpath = geometry.ToolPath(shape, step_size, geometry.ArcDir.CW, generate = True)
     timeslice = 20  # ms
     for index, arc_count in enumerate(toolpath._get_arcs(timeslice)):
-        print(index, arc_count)
-        if arc_count == 254: break
+        #print(index, arc_count)
+
         # You have access to toolpath.path here.
         # Draw what's there so far; it will ot change position in the buffer.
+        pass
+
     # Call toolpath.calculate_path() to scrap the existing and regenerate toolpath.
 
     # Display voronoi edges.
@@ -106,13 +108,13 @@ def main(argv):
                 plt.plot(x, y, c=element.debug, linewidth=1)
             else:
                 plt.plot(x, y, c="green", linewidth=1)
-            plt.plot(element.origin.x, element.origin.y, "o")
+            #plt.plot(element.origin.x, element.origin.y, "o")
 
         elif type(element).__name__ == "Line":
             #continue
             x, y = element.path.xy
             if element.safe:
-                #plt.plot(x, y, linestyle='--', c="purple", linewidth=1)
+                #plt.plot(x, y, linestyle='--', c="blue", linewidth=1)
                 pass
             else:
                 plt.plot(x, y, c="orange", linewidth=1)
