@@ -1,5 +1,7 @@
 from typing import Dict, Generator, List, NamedTuple, Optional, Set, Tuple, Union
 
+import math
+
 from shapely.geometry import LineString, MultiLineString, Point, Polygon
 from shapely.ops import linemerge, nearest_points
 from shapely.validation import make_valid
@@ -14,7 +16,7 @@ except ImportError:
 Vertex = Tuple[float, float]
 
 # Number of decimal places resolution for coordinates.
-ROUND_DP = 5
+ROUND_DP = 3
 
 # Resolution of voronoi algorithm.
 # See C++ Boost documentation.
@@ -25,12 +27,19 @@ VORONOI_RES = 10**(ROUND_DP + 1)
 #EPS = 5.96e-08
 EPS = 1 / (10 ** ROUND_DP)
 
-def round_coord(value: Tuple[float, float]) -> Tuple[float, float]:
-    return (round(value[0], ROUND_DP), round(value[1], ROUND_DP))
+def round_coord(value: Tuple[float, float], dp: int = ROUND_DP) -> Tuple[float, float]:
+    return (round(value[0], dp), round(value[1], dp))
 
 
 class VoronoiCenters:
-    def __init__(self, polygon: Polygon, tolerence: float = 0) -> None:
+    def __init__(self, polygon: Polygon, tolerence: float = 0.1) -> None:
+        """
+        Arguments:
+            polygon: The geometer that we wish to generate a voronoi diagram inside.
+            tolerence: Parameter used for pruning unwanted voronoi edges. This should
+                be approximately the same as the maximum expected jitter in
+                geometry coordinates.
+        """
         self.polygon = polygon
         self._validate_poly()
         self.tolerence = tolerence
@@ -198,6 +207,9 @@ class VoronoiCenters:
         self.edge_to_vertex[edge_index] = (vert_index_a, vert_index_b)
 
     def _remove_edge(self, edge_index: int) -> None:
+        if len(self.edges) <= 1:
+            # Special case when cleaning up edges and self.polygon is a simple circle.
+            return
         vert_a, vert_b = self.edge_to_vertex[edge_index]
         neibours_a = self.vertex_to_edges[vert_a]
         neibours_b = self.vertex_to_edges[vert_b]
@@ -258,28 +270,75 @@ class VoronoiCenters:
             edge_combined = linemerge([edge_a, edge_b])
             self._store_edge(edge_combined, edge_i_a)
 
+    def _follow_cleanup_candidates(self, vertex: Vertex) -> Set[int]:
+        """
+        Voronoi edges that touch self.polygon are sometimes not needed and should be pruned.
+        eg: When the outer geometry contains an arc section, the arc will have been
+        split into straight line facets. A voronoi edge will touch the point where
+        these facets join. We do not need these voronoi edges so they should be pruned.
+
+        Arguments:
+            vertex: The starting point of an edge that may need pruned.
+        Returns:
+            A set of indexes into self.edges that need pruned.
+        """
+        vertex_start = vertex
+        last_edge_angle = None
+        visited_edges = set()
+        to_return = []
+        working = True
+        while working:
+            working = False
+            edges_i = self.vertex_to_edges[vertex_start]
+            if last_edge_angle is None and len(edges_i) != 1:
+                # Only interested in starting at the end of an edge.
+                return set()
+
+            for edge_i in edges_i:
+                if edge_i in visited_edges:
+                    continue
+                visited_edges.add(edge_i)
+
+                vertices = self.edge_to_vertex[edge_i]
+                vertex_end = vertices[0] if vertex_start != vertices[0] else vertices[1]
+
+                edge_angle = math.atan2(
+                        (vertex_start[0] - vertex_end[0]), (vertex_start[1] - vertex_end[1]))
+
+                if last_edge_angle is None:
+                    # This is the first edge section to be considered.
+                    # All future angles should be compared against this one for
+                    # co-linearity.
+                    assert len(edges_i) == 1
+                    last_edge_angle = edge_angle
+
+                if abs(LineString([vertex, vertex_end]).length -
+                        self.distance_from_geom(Point(vertex_end))) > self.tolerence:
+                    # This vertex_end is the far side of the arc center from the first section.
+                    # Not a candidate for cleanup.
+                    continue
+
+                if last_edge_angle is None or abs(edge_angle - last_edge_angle) < 0.1:
+                    # This voronoi edge section is roughly co-linear with the first
+                    # one so add it to the cleanup list.
+                    to_return.append(edge_i)
+                    vertex_start = vertex_end
+                    working = True
+                    break
+
+        return set(to_return)
+
     def _drop_irrelevant_edges(self) -> None:
         """
-        If any geometry resulting from a  voronoi edge will be covered by the
+        If any geometry resulting from a voronoi edge will be covered by the
         geometry of some other voronoi edge it is deemed irrelevant and pruned
         by this function.
         """
         to_prune = set()
         for index, edge in self.edges.items():
             vert_a, vert_b = self.edge_to_vertex[index]
-            neibours_a = self.vertex_to_edges[vert_a]
-            neibours_b = self.vertex_to_edges[vert_b]
-
-            if len(neibours_a) == 1:
-                if abs(self.distance_from_geom(Point(vert_b)) - edge.length) < self.tolerence / 2:
-                    to_prune.add(index)
-                if edge.length < self.tolerence:
-                    to_prune.add(index)
-            if len(neibours_b) == 1:
-                if abs(self.distance_from_geom(Point(vert_a)) - edge.length) < self.tolerence / 2:
-                    to_prune.add(index)
-                if edge.length < self.tolerence:
-                    to_prune.add(index)
+            to_prune |= self._follow_cleanup_candidates(vert_a)
+            to_prune |= self._follow_cleanup_candidates(vert_b)
 
         for index in to_prune:
             self._remove_edge(index)

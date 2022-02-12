@@ -119,7 +119,10 @@ def main(argv):
             else:
                 plt.plot(x, y, c="orange", linewidth=1)
 
-    plt.plot(toolpath.start_point.x, toolpath.start_point.y, 'o', c="black")
+    #plt.plot(toolpath.start_point.x, toolpath.start_point.y, 'o', c="black")
+    #for arc_centre, edge_count in toolpath.voronoi.dilated_vertexes.items():
+    #    if edge_count > 10:
+    #        plt.plot(arc_centre[0], arc_centre[1], 'o', c="black")
 
     plt.gca().set_aspect('equal')
     plt.show()

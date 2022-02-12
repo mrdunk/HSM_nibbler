@@ -173,7 +173,7 @@ class ToolPath:
         self.generate = generate
 
         if voronoi is None:
-            self.voronoi = VoronoiCenters(polygon, tolerence = self.step)
+            self.voronoi = VoronoiCenters(polygon)
         else:
             self.voronoi = voronoi
         self.polygon: Polygon = self.voronoi.polygon
