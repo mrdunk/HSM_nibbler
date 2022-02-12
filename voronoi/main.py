@@ -78,8 +78,8 @@ def main(argv):
     # Generate tool path.
     toolpath = geometry.ToolPath(shape, step_size, geometry.ArcDir.CW, generate = True)
     timeslice = 20  # ms
-    for index, arc_count in enumerate(toolpath._get_arcs(timeslice)):
-        #print(index, arc_count)
+    for index, progress in enumerate(toolpath._get_arcs(timeslice)):
+        print(index, progress)
 
         # You have access to toolpath.path here.
         # Draw what's there so far; it will ot change position in the buffer.

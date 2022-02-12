@@ -217,6 +217,11 @@ class ToolPath:
         self.path = []
         self.joined_path_data = self.path  # TODO: Deprecated.
 
+        self.path_len_progress: float = 0.0
+        self.path_len_total: float = 0.0
+        for edge in self.voronoi.edges.values():
+            self.path_len_total += edge.length
+
     def calculate_path(self) -> None:
         """ Reset path and restart from beginning. """
         self._reset()
@@ -668,11 +673,16 @@ class ToolPath:
                 if len(arcs) > 10:
                     self._arcs_to_path(arcs)
 
+                self.path_len_progress -= last_dist
+                self.path_len_progress += dist
+
                 if timeslice:
                     now = round(time.time() * 1000)  # (ms)
                     if start_time + timeslice < now:
-                        yield len(self.path)
+                        yield min(0.999, self.path_len_progress / self.path_len_total)
                         start_time = round(time.time() * 1000)  # (ms)
+
+                last_dist = dist
 
             self._arcs_to_path(arcs)
 
@@ -682,6 +692,8 @@ class ToolPath:
                 self.path_fail_count += 1
 
             start_vertex = self._chose_path_remainder(combined_edge.coords[-1])
+
+        yield 1.0
 
         assert not self.open_paths
         log(f"{self.loop_count=}")
