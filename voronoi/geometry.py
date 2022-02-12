@@ -652,10 +652,16 @@ class ToolPath:
                 continue
 
             dist = 0.0
+            last_dist = dist
             stuck_count = int(combined_edge.length * 10 / self.step + 10)
             while dist < combined_edge.length and stuck_count > 0:
                 stuck_count -= 1
                 dist, sub_arcs = self._calculate_arc(combined_edge, dist)
+
+                if dist <= last_dist:
+                    # Getting worse not better or staving the same.
+                    # Likely stuck.
+                    stuck_count /= 2
 
                 arcs += sub_arcs
 
