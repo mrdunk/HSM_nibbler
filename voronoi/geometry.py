@@ -232,38 +232,39 @@ class ToolPath:
                 pass
 
     def _chose_path_remainder(
-            self, closest: Optional[Tuple[float, float]] = None) -> Optional[Tuple[float, float]]:
+            self,
+            current_pos: Optional[Tuple[float, float]] = None
+            ) -> Optional[Tuple[float, float]]:
         """
         Choose a vertex with an un-traveled voronoi edge leading from it.
 
         Returns:
             A vertex that has un-traveled edges leading from it.
         """
+        # Cleanup.
+        for edge_i in self.visited_edges:
+            if edge_i in self.open_paths:
+                self.open_paths.pop(edge_i)
+
         shortest = self.voronoi.max_dist + 1
         closest_vertex: Optional[Tuple[float, float]] = None
         closest_edge: Optional[int] = None
-        to_cleanup = []
         for edge_i, vertex in self.open_paths.items():
-            if edge_i in self.visited_edges:
-                to_cleanup.append(edge_i)
+            if current_pos:
+                dist = Point(vertex).distance(Point(current_pos))
             else:
-                if closest_vertex is None:
-                    shortest = self.voronoi.max_dist
-                    closest_vertex = vertex
-                    closest_edge = edge_i
-                else:
-                    if closest:
-                        dist = Point(vertex).distance(Point(closest))
-                    else:
-                        dist = 0
+                dist = 0
 
-                    if dist < shortest:
-                        closest_vertex = vertex
-                        closest_edge = edge_i
-                        shortest = dist
-
-        for edge_i in to_cleanup:
-            self.open_paths.pop(edge_i)
+            if closest_vertex is None:
+                shortest = dist
+                closest_vertex = vertex
+                closest_edge = edge_i
+                if not current_pos:
+                    break
+            elif dist < shortest:
+                closest_vertex = vertex
+                closest_edge = edge_i
+                shortest = dist
 
         if closest_edge is not None:
             self.open_paths.pop(closest_edge)
@@ -386,6 +387,9 @@ class ToolPath:
         spacing = -1
         polygon = previous
         for arc in arcs:
+            if not arc.path:
+                continue
+
             # This is expensive but yields good results.
             # Probably want to do a binary search version?
 
@@ -478,8 +482,10 @@ class ToolPath:
                     circle, self.cut_area_total, self.winding_dir, color_overide)
             if not arcs:
                 # arc is entirely hidden by previous cut geometry.
-                # Nothing more to do here.
-                return (voronoi_edge.length, [])
+                # Don't record it as an arc that needs drawn.
+                arcs = [circle]
+                self.last_circle = circle
+                return(distance, [])
 
             # Progress is measured as the furthest point he proposed arc is
             # from the previous one. We are aiming for proposed == desired_step.
@@ -511,11 +517,10 @@ class ToolPath:
 
             #log_arc += f"\t{start_distance}\t{distance=}\t{progress=}\t{best_progress=}\t{modifier=}\n"
 
-        log_arc += f"\t{progress=}\t{best_progress=}\t{best_distance=}\t{voronoi_edge.length=}\n"
+        log_arc += f"{best_progress=}\t{best_distance=}\t{voronoi_edge.length=}\n"
         log_arc += "\t--------"
 
         if best_distance > voronoi_edge.length:
-            #if abs(voronoi_edge.length - best_distance) < desired_step / 20:
             if best_progress < desired_step / 20:
                 # Ignore trivial edge ends.
                 return (distance, [])
@@ -568,11 +573,6 @@ class ToolPath:
         """
         vertex = start_vertex
 
-        import matplotlib.pyplot as plt    # type: ignore
-        plt.plot(vertex[0], vertex[1], 'o', c="black", s=10)
-        print(vertex)
-
-
         line_coords: List[Tuple[float, float]] = []
 
         while True:
@@ -597,20 +597,19 @@ class ToolPath:
 
             self.visited_edges.add(candidate)
             edge_coords = self.voronoi.edges[candidate].coords
-            if not line_coords:
-                if vertex == edge_coords[-1]:
-                    edge_coords = edge_coords[::-1]
-            else:
-                if line_coords[-1] != edge_coords[0]:
-                    edge_coords = edge_coords[::-1]
-            line_coords += edge_coords
 
-            vertices = self.voronoi.edge_to_vertex[candidate]
-            assert vertex in vertices
-            if vertex == vertices[0]:
-                vertex = vertices[1]
+            if not line_coords:
+                line_coords = edge_coords
+                if start_vertex != line_coords[0]:
+                    line_coords = line_coords[::-1]
             else:
-                vertex = vertices[0]
+                if line_coords[-1] == edge_coords[-1]:
+                    edge_coords = edge_coords[::-1]
+                assert line_coords[0] == start_vertex
+                assert line_coords[-1] == edge_coords[0]
+                line_coords = list(line_coords) + list(edge_coords)
+
+            vertex = line_coords[-1]
 
         line = LineString(line_coords)
 
@@ -677,7 +676,7 @@ class ToolPath:
                 self.path_fail_count += 1
 
             start_vertex = self._chose_path_remainder(combined_edge.coords[-1])
-        
+
         assert not self.open_paths
         log(f"{self.loop_count=}")
         log(f"{self.arc_fail_count=}")

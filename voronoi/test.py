@@ -103,8 +103,8 @@ def test_file(filepath: str, overlap: float, winding: geometry.ArcDir) -> Result
     if arc_count:
         arc_attempt_ratio = round(toolpath.loop_count / arc_count, 4)
         arc_fail_ratio = round(toolpath.arc_fail_count / arc_count, 4)
-        path_fail_ratio = round(toolpath.path_fail_count / arc_count, 4)
-        time_per_arc = round(time_run / arc_count, 4)
+        path_fail_ratio = toolpath.path_fail_count / arc_count
+        time_per_arc = round(-time_run / arc_count, 4)
     else:
         arc_attempt_ratio = "infinite"
         arc_fail_ratio = "infinite"

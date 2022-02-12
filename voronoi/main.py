@@ -97,8 +97,8 @@ def main(argv):
                 x.append(point[0])
                 y.append(point[1])
             plt.plot(x, y, c="red", linewidth=2)
-            plt.plot(x[0], y[0], 'x', c="red")
-            plt.plot(x[-1], y[-1], 'x', c="red")
+            #plt.plot(x[0], y[0], 'x', c="red")
+            #plt.plot(x[-1], y[-1], 'x', c="red")
 
     # Display path.
     for element in toolpath.path:
@@ -108,7 +108,7 @@ def main(argv):
                 plt.plot(x, y, c=element.debug, linewidth=1)
             else:
                 plt.plot(x, y, c="green", linewidth=1)
-            #plt.plot(element.origin.x, element.origin.y, "o")
+            plt.plot(element.origin.x, element.origin.y, "o")
 
         elif type(element).__name__ == "Line":
             #continue
