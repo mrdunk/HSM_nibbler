@@ -104,19 +104,32 @@ def create_arc_from_path(
         path_: LineString,
         debug: str = None
         ) -> ArcData:
+    """
+    Save data for the arc sections of the path.
+    This is called a lot so any optimizations here save us time.
+    """
     # Make copy of path since we may need to modify it.
     path = LineString(path_)
 
-    start = Point(path.coords[0])
-    end = Point(path.coords[-1])
+    start_coord = path.coords[0]
+    end_coord = path.coords[-1]
+    start = Point(start_coord)
+    end = Point(end_coord)
     mid = path.interpolate(0.5, normalized=True)
     radius = origin.distance(start)
     #assert abs((origin.distance(mid) - radius) / radius) < 0.01
     #assert abs((origin.distance(end) - radius) / radius) < 0.01
 
-    start_angle = math.atan2(start.x - origin.x, start.y - origin.y)
-    end_angle = math.atan2(end.x - origin.x, end.y - origin.y)
-    mid_angle = math.atan2(mid.x - origin.x, mid.y - origin.y)
+    # Breaking these out once rather than separately inline later saves us ~7%
+    # CPU time overall.
+    org_x, org_y = origin.xy
+    start_x, start_y = start_coord
+    mid_x, mid_y = mid.xy
+    end_x, end_y = end_coord
+
+    start_angle = math.atan2(start_x - org_x[0], start_y - org_y[0])
+    end_angle = math.atan2(end_x - org_x[0], end_y - org_y[0])
+    mid_angle = math.atan2(mid_x[0] - org_x[0], mid_y[0] - org_y[0])
 
     ds = (start_angle - mid_angle) % (2 * math.pi)
     de = (mid_angle - end_angle) % (2 * math.pi)
@@ -153,8 +166,7 @@ def arcs_from_circle_diff(
 
     arcs = []
     for arc in line_diff.geoms:
-        path = LineString(arc.coords)
-        arcs.append(create_arc_from_path(circle.origin, winding_dir, path, debug))
+        arcs.append(create_arc_from_path(circle.origin, winding_dir, arc, debug))
     return arcs
 
 
@@ -341,15 +353,17 @@ class ToolPath:
         """
         Calculate maximum step_over between 2 arcs.
         """
-        return self._furthest_spacing_shapely(arcs, Polygon(last_circle.path))
 
-        # TODO: Can i fix the following?
         spacing = -1
 
         for arc in arcs:
             spacing = max(spacing,
                     last_circle.origin.hausdorff_distance(arc.path) - last_circle.radius)
-                    #arc.path.hausdorff_distance(last_circle.origin) - last_circle.radius)
+
+            #for index in range(0, len(arc.path.coords), 1):
+            #    coord = arc.path.coords[index]
+            #    spacing = max(spacing,
+            #            Point(coord).distance(last_circle.origin) - last_circle.radius)
         return spacing
 
     @classmethod
@@ -377,7 +391,8 @@ class ToolPath:
 
             for index in range(0, len(arc.path.coords), 1):
                 coord = arc.path.coords[index]
-                spacing = max(spacing, Point(coord).distance(polygon))
+                #spacing = max(spacing, Point(coord).distance(polygon))
+                spacing = max(spacing, polygon.distance(Point(coord)))
 
         return spacing
 
@@ -552,6 +567,11 @@ class ToolPath:
             A LineString object of the combined edges.
         """
         vertex = start_vertex
+
+        import matplotlib.pyplot as plt    # type: ignore
+        plt.plot(vertex[0], vertex[1], 'o', c="black", s=10)
+        print(vertex)
+
 
         line_coords: List[Tuple[float, float]] = []
 

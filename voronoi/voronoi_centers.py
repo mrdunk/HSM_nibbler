@@ -318,7 +318,7 @@ class VoronoiCenters:
                     # Not a candidate for cleanup.
                     continue
 
-                if last_edge_angle is None or abs(edge_angle - last_edge_angle) < 0.1:
+                if last_edge_angle is None or abs(edge_angle - last_edge_angle) < 0.3:
                     # This voronoi edge section is roughly co-linear with the first
                     # one so add it to the cleanup list.
                     to_return.append(edge_i)
