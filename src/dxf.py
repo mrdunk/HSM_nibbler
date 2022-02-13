@@ -1,4 +1,7 @@
-""" Helper methods for converting .dxf source files into shapely Polygons. """
+"""
+Helper methods for converting .dxf source files into shapely Polygons.
+Used by the test implementation main.py.
+"""
 
 from typing import List, Tuple
 
@@ -6,10 +9,14 @@ from math import *
 
 from ezdxf.entities.lwpolyline import LWPolyline as DxfPolyline
 from ezdxf.query import EntityQuery as DxfPolylines
-from shapely.geometry import LineString, MultiLineString, Point, Polygon, LinearRing, MultiPoint
+from shapely.geometry import LineString, MultiLineString, Point, Polygon, LinearRing, MultiPoint  # type: ignore
 
 CIRCLE_RES = 500
-DP = 2
+
+# Introduce coordinate jitter by clamping coordinates to this number of decimal places.
+# Used for testing.
+# Set to "0" to disable.
+DP = 1
 
 def round_points(points):
     """ Used in testing. Clamps points to rounded coordinates. """

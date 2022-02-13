@@ -1,17 +1,24 @@
-from typing import Dict, Generator, List, NamedTuple, Optional, Set, Tuple, Union
+"""
+A wrapper for pyvoronoi that calculates the paths along the center of polygon
+data. Any point on the voronoi path will be equidistant to 2 or more polygon edges.
+While pyvoronoi does not natively handle arcs and circles, this wrapper attempts
+to prune voronoi edges that are produces by circles that have been split into
+line segments.
+"""
+from typing import Dict, List, Optional, Set, Tuple
 
 import math
 
-from shapely.geometry import LineString, MultiLineString, Point, Polygon
-from shapely.ops import linemerge, nearest_points
-from shapely.validation import make_valid
+from shapely.geometry import LineString, Point, Polygon  # type: ignore
+from shapely.ops import linemerge, nearest_points  # type: ignore
+from shapely.validation import make_valid  # type: ignore
 
-import pyvoronoi
+import pyvoronoi  # type: ignore
 
 try:
-    from helpers import log
+    from helpers import log  # type: ignore
 except ImportError:
-    from cam.helpers import log
+    from cam.helpers import log  # type: ignore
 
 Vertex = Tuple[float, float]
 
@@ -23,9 +30,10 @@ ROUND_DP = 5
 # Set it to 1 better than the geometry resolution.
 VORONOI_RES = 10**(ROUND_DP + 1)
 
-# A tiny number for comparing things that should touch if not for floating-point error.
+# A small number for comparing things that should touch if not for floating-point error.
 #EPS = 5.96e-08
 EPS = 1 / (10 ** ROUND_DP)
+
 
 def round_coord(value: Tuple[float, float], dp: int = ROUND_DP) -> Tuple[float, float]:
     return (round(value[0], dp), round(value[1], dp))
@@ -45,7 +53,7 @@ class VoronoiCenters:
         self.tolerence = tolerence
 
         self.max_dist = max((self.polygon.bounds[2] - self.polygon.bounds[0]),
-                (self.polygon.bounds[3] - self.polygon.bounds[1])) + 1
+                            (self.polygon.bounds[3] - self.polygon.bounds[1])) + 1
 
         # Collect polygon segments to populate voronoi with.
         geom_primatives: List[Tuple[Vertex, Vertex]] = []
@@ -98,7 +106,7 @@ class VoronoiCenters:
                         line = LineString((
                             round_coord((start_vert.X, start_vert.Y)),
                             round_coord((end_vert.X, end_vert.Y))
-                            ))
+                        ))
                         self._store_edge(line)
                     else:
                         cell = cells[edge.cell]
@@ -109,30 +117,37 @@ class VoronoiCenters:
                         if cell.contains_point:
                             geom_points.append(pv.RetrieveScaledPoint(cell))
                         if cell_twin.contains_point:
-                            geom_points.append(pv.RetrieveScaledPoint(cell_twin))
+                            geom_points.append(
+                                pv.RetrieveScaledPoint(cell_twin))
                         if cell.contains_segment:
                             geom_edges.append(pv.RetriveScaledSegment(cell))
                         if cell_twin.contains_segment:
-                            geom_edges.append(pv.RetriveScaledSegment(cell_twin))
+                            geom_edges.append(
+                                pv.RetriveScaledSegment(cell_twin))
                         assert len(geom_edges) > 0
                         assert len(geom_points) + len(geom_edges) == 2
 
                         if len(geom_points) == 1 and len(geom_edges) == 1:
-                            start_point = Point(round_coord((start_vert.X, start_vert.Y)))
-                            end_point = Point(round_coord((end_vert.X, end_vert.Y)))
+                            start_point = Point(round_coord(
+                                (start_vert.X, start_vert.Y)))
+                            end_point = Point(round_coord(
+                                (end_vert.X, end_vert.Y)))
                             max_distance = start_point.distance(end_point) / 10 + 0.01
                             points = (round_coord(point)
-                                for point in pv.DiscretizeCurvedEdge(edge_index, max_distance))
+                                      for point in
+                                      pv.DiscretizeCurvedEdge(edge_index, max_distance))
                             self._store_edge(LineString(points))
                         else:
                             # A parabola between 2 lines (as opposed to 1 line and one point)
                             # leaves the DiscretizeCurvedEdge() function broken sometimes.
                             # Let's just assume a straight line edge in these cases.
+                            # This is a particular problem when duplicate points in
+                            # input data create a line of zero length.
                             log(f"BORKED VORONOI: \t{geom_points=}\t{geom_edges=}")
                             line = LineString((
                                 round_coord((start_vert.X, start_vert.Y)),
                                 round_coord((end_vert.X, end_vert.Y))
-                                ))
+                            ))
                             self._store_edge(line)
                         continue
 
@@ -145,7 +160,7 @@ class VoronoiCenters:
         self._drop_irrelevant_edges()
         self._combine_edges([widest_point.coords[0]])
 
-        #self._check_data()
+        # self._check_data()
 
     def _check_data(self) -> None:
         """ Sanity check data structures. """
@@ -155,7 +170,7 @@ class VoronoiCenters:
             assert len(vertices) == 2
             assert edge.coords[0] in vertices
             assert edge.coords[-1] in vertices
-            assert edge.coords[0] != edge.coords[-1] # Loop
+            assert edge.coords[0] != edge.coords[-1]  # Loop
             assert vertices[0] in self.vertex_to_edges
             assert vertices[1] in self.vertex_to_edges
 
@@ -167,28 +182,40 @@ class VoronoiCenters:
             assert vertices[1] in self.vertex_to_edges
 
         for vertex, edges_i in self.vertex_to_edges.items():
-            assert len(set(edges_i)) == len(edges_i) # Loop
+            assert len(set(edges_i)) == len(edges_i)  # Loop
             for edge_i in edges_i:
                 assert edge_i in self.edges
                 vertices = self.edge_to_vertex[edge_i]
                 assert vertex in vertices
 
     def _validate_poly(self) -> None:
+        """
+        Make sure input geometry is sane.
+        Do some quick fixes on common issues.
+        """
         fixed = make_valid(self.polygon)
         while fixed.type == "MultiPolygon":
             fixed = fixed.geoms[0]
             fixed = make_valid(fixed)
             # TODO: Should we just throw an exception here?
-            # The geometry is not valid. Knowing which piece to work on is a
-            # crap shoot.
+            # There is more than one choice for the outer geometry loop.
+            # Knowing which piece to work on is a crap shoot.
             # It should be up to the client code to make the decision and correctly
             # format the input polygon.
         if fixed.type == "Polygon":
             self.polygon = fixed
 
+        # Any jitter in input geometry may make points appear out of sequence
+        # leading to invalid geometry.
+        # See here for what valid geometry looks like:
+        # https://shapely.readthedocs.io/en/latest/manual.html#polygons
+        # .simplify(...) will fix issues caused by input coordinate jitter.
         self.polygon = self.polygon.simplify(0.05)
 
     def _store_edge(self, edge: LineString, replace_index=None) -> None:
+        """
+        Store a vorinoi edge and associated vertices in out internal data structures.
+        """
         if edge.length == 0:
             return
 
@@ -201,12 +228,17 @@ class VoronoiCenters:
 
         self.edges[edge_index] = edge
         if edge_index not in self.vertex_to_edges:
-            self.vertex_to_edges.setdefault(vert_index_a, []).append(edge_index)
+            self.vertex_to_edges.setdefault(
+                vert_index_a, []).append(edge_index)
         if edge_index not in self.vertex_to_edges:
-            self.vertex_to_edges.setdefault(vert_index_b, []).append(edge_index)
+            self.vertex_to_edges.setdefault(
+                vert_index_b, []).append(edge_index)
         self.edge_to_vertex[edge_index] = (vert_index_a, vert_index_b)
 
     def _remove_edge(self, edge_index: int) -> None:
+        """
+        Remove a vorinoi edge and associated vertices in out internal data structures.
+        """
         if len(self.edges) <= 1:
             # Special case when cleaning up edges and self.polygon is a simple circle.
             return
@@ -225,8 +257,8 @@ class VoronoiCenters:
 
     def distance_from_geom(self, point: Point) -> float:
         """
-        Distance form nearest edge. Note this edge may be the outer boundary or
-        the edge of an island.
+        Distance form nearest geometry edge. Note this edge may be the outer
+        boundary or the edge of an island.
         """
         radius = self.max_dist
         for ring in [self.polygon.exterior] + list(self.polygon.interiors):
@@ -236,7 +268,10 @@ class VoronoiCenters:
         return radius
 
     def _combine_edges(self, dont_merge: List[Tuple[float, float]]) -> None:
-        """ For any vertex with only 2 edges meeting there, combine the edges. """
+        """
+        For any voronoi vertex with only 2 edges meeting there, combine the
+        voronoi edges, removing the vertex.
+        """
         to_merge = []
         for vertex, edges_i in self.vertex_to_edges.items():
             if len(edges_i) == 2 and vertex not in dont_merge:
@@ -272,7 +307,8 @@ class VoronoiCenters:
 
     def _follow_cleanup_candidates(self, vertex: Vertex) -> Set[int]:
         """
-        Voronoi edges that touch self.polygon are sometimes not needed and should be pruned.
+        Voronoi edges that touch self.polygon are sometimes not needed and should
+        be pruned.
         eg: When the outer geometry contains an arc section, the arc will have been
         split into straight line facets. A voronoi edge will touch the point where
         these facets join. We do not need these voronoi edges so they should be pruned.
@@ -282,10 +318,10 @@ class VoronoiCenters:
         Returns:
             A set of indexes into self.edges that need pruned.
         """
-        vertex_start = vertex
-        last_edge_angle = None
-        visited_edges = set()
-        to_return = []
+        vertex_start: Vertex = vertex
+        last_edge_angle: Optional[float] = None
+        visited_edges: Set[int] = set()
+        to_return: Set[int] = set()
         working = True
         while working:
             working = False
@@ -303,7 +339,7 @@ class VoronoiCenters:
                 vertex_end = vertices[0] if vertex_start != vertices[0] else vertices[1]
 
                 edge_angle = math.atan2(
-                        (vertex_start[0] - vertex_end[0]), (vertex_start[1] - vertex_end[1]))
+                    (vertex_start[0] - vertex_end[0]), (vertex_start[1] - vertex_end[1]))
 
                 if last_edge_angle is None:
                     # This is the first edge section to be considered.
@@ -313,7 +349,7 @@ class VoronoiCenters:
                     last_edge_angle = edge_angle
 
                 if abs(LineString([vertex, vertex_end]).length -
-                        self.distance_from_geom(Point(vertex_end))) > self.tolerence:
+                       self.distance_from_geom(Point(vertex_end))) > self.tolerence:
                     # This vertex_end is the far side of the arc center from the first section.
                     # Not a candidate for cleanup.
                     continue
@@ -321,12 +357,12 @@ class VoronoiCenters:
                 if last_edge_angle is None or abs(edge_angle - last_edge_angle) < 0.3:
                     # This voronoi edge section is roughly co-linear with the first
                     # one so add it to the cleanup list.
-                    to_return.append(edge_i)
+                    to_return.add(edge_i)
                     vertex_start = vertex_end
                     working = True
                     break
 
-        return set(to_return)
+        return to_return
 
     def _drop_irrelevant_edges(self) -> None:
         """
@@ -334,14 +370,14 @@ class VoronoiCenters:
         geometry of some other voronoi edge it is deemed irrelevant and pruned
         by this function.
         """
-        to_prune = set()
-        for index, edge in self.edges.items():
-            vert_a, vert_b = self.edge_to_vertex[index]
+        to_prune: Set[int] = set()
+        for edge_i in self.edges:
+            vert_a, vert_b = self.edge_to_vertex[edge_i]
             to_prune |= self._follow_cleanup_candidates(vert_a)
             to_prune |= self._follow_cleanup_candidates(vert_b)
 
-        for index in to_prune:
-            self._remove_edge(index)
+        for edge_i in to_prune:
+            self._remove_edge(edge_i)
 
     def widest_gap(self) -> Tuple[Point, float]:
         """
@@ -352,7 +388,7 @@ class VoronoiCenters:
                             Radius of circle that fits in widest point.
         """
         max_dist = max((self.polygon.bounds[2] - self.polygon.bounds[0]),
-                (self.polygon.bounds[3] - self.polygon.bounds[1])) + 1
+                       (self.polygon.bounds[3] - self.polygon.bounds[1])) + 1
 
         widest_dist = 0
         widest_point = None
@@ -366,4 +402,3 @@ class VoronoiCenters:
                 widest_dist = nearest_dist
                 widest_point = Point(vertex)
         return (widest_point, widest_dist)
-

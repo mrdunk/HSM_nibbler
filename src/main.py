@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-""" Experimenting with CNC machining toolpaths. """
+"""
+Experimenting with CNC machining toolpaths.
+This program is a demo which uses the main library file on test .dxf CAD files.
+"""
 
 import sys
 
@@ -36,6 +39,9 @@ def print_entity(entity: ezdxf.entities.DXFGraphic, indent: int = 0):
             print(f"{padding}  {attribute}: {list(got())}")
 
 def main(argv):
+    """
+    Example program making use of HSM "peeling" CAM.
+    """
     if len(argv) < 2:
         print("Incorrect command line arguments.")
         print(f"Use:\n   {argv[0]} FILENAME [STEP_sIZE]")
@@ -76,29 +82,26 @@ def main(argv):
         plt.plot(x, y, c="orange", linewidth=2)
 
     # Generate tool path.
-    toolpath = geometry.ToolPath(shape, step_size, geometry.ArcDir.CW, generate = True)
+    toolpath = geometry.ToolPath(shape, step_size, geometry.ArcDir.CW, generate=True)
     timeslice = 20  # ms
-    for index, progress in enumerate(toolpath._get_arcs(timeslice)):
+    for index, progress in enumerate(toolpath.get_arcs(timeslice)):
         print(index, progress)
 
         # You have access to toolpath.path here.
         # Draw what's there so far; it will ot change position in the buffer.
-        pass
 
     # Call toolpath.calculate_path() to scrap the existing and regenerate toolpath.
 
     # Display voronoi edges.
-    for vertex, edges in toolpath.voronoi.vertex_to_edges.items():
-        for edge_index in edges:
-            edge = toolpath.voronoi.edges[edge_index]
-            x = []
-            y = []
-            for point in edge.coords:
-                x.append(point[0])
-                y.append(point[1])
-            plt.plot(x, y, c="red", linewidth=2)
-            plt.plot(x[0], y[0], 'x', c="red")
-            plt.plot(x[-1], y[-1], 'x', c="red")
+    for edge in toolpath.voronoi.edges.values():
+        x = []
+        y = []
+        for point in edge.coords:
+            x.append(point[0])
+            y.append(point[1])
+        plt.plot(x, y, c="red", linewidth=2)
+        plt.plot(x[0], y[0], 'x', c="red")
+        plt.plot(x[-1], y[-1], 'x', c="red")
 
     # Display path.
     for element in toolpath.path:
@@ -111,7 +114,6 @@ def main(argv):
             #plt.plot(element.origin.x, element.origin.y, "o")
 
         elif type(element).__name__ == "Line":
-            #continue
             x, y = element.path.xy
             if element.safe:
                 #plt.plot(x, y, linestyle='--', c="blue", linewidth=1)

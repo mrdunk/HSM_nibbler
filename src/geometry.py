@@ -1,19 +1,24 @@
+"""
+A CAM library for generating HSM "peeling" toolpaths from supplied geometry.
+"""
+
+# pylint: disable=attribute-defined-outside-init
+
 from typing import Dict, Generator, List, NamedTuple, Optional, Set, Tuple, Union
 
 from enum import Enum
 import math
 import time
 
-from shapely.geometry import LineString, MultiLineString, Point, Polygon
-from shapely.ops import linemerge, nearest_points
-from shapely.validation import make_valid
+from shapely.geometry import LineString, MultiLineString, Point, Polygon  # type: ignore
+from shapely.ops import linemerge  # type: ignore
 
 try:
-    from voronoi_centers import VoronoiCenters
-    from helpers import log
+    from voronoi_centers import VoronoiCenters  # type: ignore
+    from helpers import log  # type: ignore
 except ImportError:
-    from cam.voronoi_centers import VoronoiCenters
-    from cam.helpers import log
+    from cam.voronoi_centers import VoronoiCenters  # type: ignore
+    from cam.helpers import log  # type: ignore
 
 
 # Number of tries before we give up trying to find a best-fit arc and just go
@@ -34,7 +39,7 @@ BREADTH_FIRST = False
 # Expressed as a multiple of the step size.
 #CORNER_ZOOM = 4
 #CORNER_ZOOM = 8
-CORNER_ZOOM = 0
+CORNER_ZOOM = 0  # Disabled.
 CORNER_ZOOM_EFFECT = 0.75
 #CORNER_ZOOM_EFFECT = 3
 
@@ -43,17 +48,6 @@ class ArcDir(Enum):
     CW = 0
     CCW = 1
     # Closest = 2  # TODO
-
-
-def timing(func):
-    def wrap(*args, **kwargs):
-        time1 = time.time()
-        ret = func(*args, **kwargs)
-        time2 = time.time()
-        log('{:s} function took {:.3f} ms'.format(func.__name__, (time2-time1)*1000.0))
-
-        return ret
-    return wrap
 
 
 ArcData = NamedTuple("Arc", [
@@ -69,41 +63,50 @@ ArcData = NamedTuple("Arc", [
     # TODO: ("widest_DOC", float),
     ("path", LineString),
     ("debug", Optional[str])
-    ])
+])
 
 LineData = NamedTuple("Line", [
     ("start", Optional[Point]),
     ("end", Optional[Point]),
     ("path", LineString),
     ("safe", bool)
-    ])
+])
+
 
 def join_arcs(start: ArcData, end: ArcData, safe_area: Polygon) -> LineData:
+    """
+    Generate CAM tool path to join the end of one arc to the beginning of the next.
+    """
     path = LineString([start.path.coords[-1], end.path.coords[0]])
     safe = path.covered_by(safe_area)
     return LineData(start.start, end.end, path, safe)
+
 
 def create_circle(
         origin: Point,
         radius: float,
         winding_dir: ArcDir,
-        path: Optional[LineString]=None) -> ArcData:
+        path: Optional[LineString] = None) -> ArcData:
+    """
+    Generate a circle that will be split into arcs to be part of the toolpath later.
+    """
     span_angle = 2 * math.pi
     if winding_dir == ArcDir.CCW:
         span_angle = -span_angle
     if path is None:
         return ArcData(
-                origin, radius, None, None, 0, span_angle, origin.buffer(radius).boundary, "")
+            origin, radius, None, None, 0, span_angle, origin.buffer(radius).boundary, "")
     # Warning: For this branch no check is done to ensure path has correct
     # winding direction.
     return ArcData(origin, radius, None, None, 0, span_angle, path, "")
+
 
 def create_arc_from_path(
         origin: Point,
         winding_dir: ArcDir,
         path_: LineString,
         debug: str = None
-        ) -> ArcData:
+) -> ArcData:
     """
     Save data for the arc sections of the path.
     This is called a lot so any optimizations here save us time.
@@ -154,7 +157,7 @@ def arcs_from_circle_diff(
         polygon: Polygon,
         winding_dir: ArcDir,
         debug: str = None
-        ) -> List[ArcData]:
+) -> List[ArcData]:
     """ Return any sections of circle that do not overlap polygon. """
     line_diff = circle.path.difference(polygon)
     if not line_diff:
@@ -166,12 +169,33 @@ def arcs_from_circle_diff(
 
     arcs = []
     for arc in line_diff.geoms:
-        arcs.append(create_arc_from_path(circle.origin, winding_dir, arc, debug))
+        arcs.append(create_arc_from_path(
+            circle.origin, winding_dir, arc, debug))
     return arcs
 
 
+def _colapse_dupe_points(line: LineString) -> Optional[LineString]:
+    """
+    Filter out duplicate points.
+    TODO: Profile whether a .simplify(0) would be quicker?
+    """
+    points = []
+    last_point = None
+    for point in line.coords:
+        if last_point == point:
+            continue
+        points.append(point)
+        last_point = point
+    if len(points) < 2:
+        return None
+    return LineString(points)
+
+
 class ToolPath:
-    @timing
+    """
+    A CAM library to generate a HSM "peeling" pocketing toolpath.
+    """
+
     def __init__(
             self,
             polygon: Polygon,
@@ -179,7 +203,7 @@ class ToolPath:
             winding_dir: ArcDir,
             generate: bool = False,
             voronoi: Optional[VoronoiCenters] = None
-            ) -> None:
+    ) -> None:
         self.step: float = step
         self.winding_dir: ArcDir = winding_dir
         self.generate = generate
@@ -194,15 +218,13 @@ class ToolPath:
 
     def _reset(self) -> None:
         """ Cleanup and/or initialise everything. """
-        self.remainder: float = 0.0
-        self.last_radius = None
         self.start_point: Point
         self.start_radius: float
         self.start_point, self.start_radius = self.voronoi.widest_gap()
 
         # Assume starting circle is already cut.
         self.last_circle: Optional[ArcData] = create_circle(
-                self.start_point, self.start_radius, self.winding_dir)
+            self.start_point, self.start_radius, self.winding_dir)
         self.cut_area_total = Polygon(self.last_circle.path)
 
         self.arc_fail_count: int = 0
@@ -214,7 +236,7 @@ class ToolPath:
         self.visited_edges: Set[int] = set()
         self.open_paths: Dict[int, Tuple[float, float]] = {}
 
-        self.path = []
+        self.path: List[Union[ArcData, LineData]] = []
         self.joined_path_data = self.path  # TODO: Deprecated.
 
         self.path_len_progress: float = 0.0
@@ -225,9 +247,9 @@ class ToolPath:
     def calculate_path(self) -> None:
         """ Reset path and restart from beginning. """
         self._reset()
-        
+
         # Create the generator.
-        generator = self._get_arcs()
+        generator = self.get_arcs()
 
         if not self.generate:
             # Don't want to use it as a generator so set it running.
@@ -236,10 +258,10 @@ class ToolPath:
             except StopIteration:
                 pass
 
-    def _chose_path_remainder(
+    def _choose_next_path(
             self,
             current_pos: Optional[Tuple[float, float]] = None
-            ) -> Optional[Tuple[float, float]]:
+    ) -> Optional[Tuple[float, float]]:
         """
         Choose a vertex with an un-traveled voronoi edge leading from it.
 
@@ -278,45 +300,31 @@ class ToolPath:
         return closest_vertex
 
     @classmethod
-    def _colapse_dupe_points(cls, line: LineString) -> Optional[LineString]:
-        points = []
-        last_point = None
-        for point in line.coords:
-            if last_point == point:
-                continue
-            points.append(point)
-            last_point = point
-        if len(points) < 2:
-            return None
-        return LineString(points)
-
-    @classmethod
     def _extrapolate_line(cls, extra: float, line: LineString) -> LineString:
         """
-        Extend a line at both ends in the same direction as the end coordinate
-        pair implies.
+        Extend a line at both ends in the same direction it points.
         """
         coord_0, coord_1 = line.coords[:2]
         coord_m2, coord_m1 = line.coords[-2:]
         ratio_begin = extra / LineString([coord_0, coord_1]).length
         ratio_end = extra / LineString([coord_m2, coord_m1]).length
         coord_begin = Point(
-                coord_0[0] + (coord_0[0] - coord_1[0]) * ratio_begin,
-                coord_0[1] + (coord_0[1] - coord_1[1]) * ratio_begin)
+            coord_0[0] + (coord_0[0] - coord_1[0]) * ratio_begin,
+            coord_0[1] + (coord_0[1] - coord_1[1]) * ratio_begin)
         coord_end = Point(
-                coord_m1[0] + (coord_m1[0] - coord_m2[0]) * ratio_end,
-                coord_m1[1] + (coord_m1[1] - coord_m2[1]) * ratio_end)
+            coord_m1[0] + (coord_m1[0] - coord_m2[0]) * ratio_end,
+            coord_m1[1] + (coord_m1[1] - coord_m2[1]) * ratio_end)
         return LineString([coord_begin] + list(line.coords) + [coord_end])
 
     @classmethod
     def _pid(cls, kp: float, ki: float, kd: float, seed: float
-            ) -> Generator[float, Tuple[float, float], None]:
+             ) -> Generator[float, Tuple[float, float], None]:
         """
         A PID algorithm used for recursively estimating the position of the best
         fit arc.
 
         Arguments:
-            kp: Propotional multiplier.
+            kp: Proportional multiplier.
             ki: Integral multiplier.
             kd: Derivative multiplier.
         Yields:
@@ -359,14 +367,13 @@ class ToolPath:
         """
         Calculate maximum step_over between 2 arcs.
         """
-
         spacing = -1
 
         for arc in arcs:
             spacing = max(spacing,
-                    last_circle.origin.hausdorff_distance(arc.path) - last_circle.radius)
+                          last_circle.origin.hausdorff_distance(arc.path) - last_circle.radius)
 
-            #for index in range(0, len(arc.path.coords), 1):
+            # for index in range(0, len(arc.path.coords), 1):
             #    coord = arc.path.coords[index]
             #    spacing = max(spacing,
             #            Point(coord).distance(last_circle.origin) - last_circle.radius)
@@ -410,19 +417,27 @@ class ToolPath:
             voronoi_edge: LineString,
             start_distance: float,
             debug: bool = False
-            ) -> Tuple[float, List[ArcData]]:
+    ) -> Tuple[float, List[ArcData]]:
         """
         Calculate the arc that best fits within the path geometry.
 
         A given point on the voronoi_edge is equidistant between the edges of the
         desired cut path. We can calculate this distance and it forms the radius
         of an arc touching the cut path edges.
-        We need the furthers point on that arc to be step distance away from
+        We need the furthest point on that arc to be desired_step distance away from
         the previous arc. It is hard to calculate a point on the voronoi_edge that
         results in the correct spacing between the new and previous arc.
 
+        The constraints for the new arc are:
+        1) The arc must go through the point on the voronoi edge desired_step
+          distance from the previous arc's intersection with the voronoi edge.
+        2) The arc must be a tangent to the edge of the cut pocket.
+          Or put another way: The distance from the center of the arc to the edge
+          of the cut pocket should be the same as the distance from the center of
+          the arc to the point described in 1).
+
         Rather than work out the new arc centre position with maths, it is quicker
-        and easier to use trial and error, moving the proposed centre repeatedly
+        and easier to use a binary search, moving the proposed centre repeatedly
         and seeing if the arc fits.
 
         Arguments:
@@ -437,6 +452,9 @@ class ToolPath:
                 about the arcs generated with an origin the specified distance
                 allong the voronoi edge.
         """
+        # A full PID algorithm is provided for estimating the center of the arc
+        # but so far all test cases have been solved with only the Proportional
+        # parameter enabled.
         pid = self._pid(0.75, 0, 0, 0)
         #pid = self._pid(0.19, 0.04, 0.12, 0)
         #pid = self._pid(0.9, 0.01, 0.01, 0)
@@ -453,8 +471,8 @@ class ToolPath:
 
         # Strange shapely bug causes ...interpolate(distance) to give wrong
         # results if distance == 0.
-        if distance == 0:
-            distance = 0.001
+        # if distance == 0:
+        #    distance = 0.001
 
         count: int = 0
         circle: Optional[ArcData] = None
@@ -467,8 +485,10 @@ class ToolPath:
 
         # Extrapolate line beyond it's actual distance to give the PID algorithm
         # room to overshoot while converging on an optimal position for the new arc.
-        edge_extended: LineString = self._extrapolate_line(dist_offset, voronoi_edge)
-        assert abs(edge_extended.length - (voronoi_edge.length + 2 * dist_offset)) < 0.0001
+        edge_extended: LineString = self._extrapolate_line(
+            dist_offset, voronoi_edge)
+        assert abs(edge_extended.length -
+                   (voronoi_edge.length + 2 * dist_offset)) < 0.0001
 
         assert self.cut_area_total
 
@@ -478,13 +498,14 @@ class ToolPath:
             count += 1
 
             # Propose an arc.
-            pos, radius = self._arc_at_distance(distance + dist_offset, edge_extended)
+            pos, radius = self._arc_at_distance(
+                distance + dist_offset, edge_extended)
             circle = create_circle(pos, radius, self.winding_dir)
 
             # Compare proposed arc to cut area.
             # We are only interested in sections that have not been cut yet.
             arcs = arcs_from_circle_diff(
-                    circle, self.cut_area_total, self.winding_dir, color_overide)
+                circle, self.cut_area_total, self.winding_dir, color_overide)
             if not arcs:
                 # arc is entirely hidden by previous cut geometry.
                 # Don't record it as an arc that needs drawn.
@@ -497,7 +518,8 @@ class ToolPath:
             if self.last_circle:
                 progress = self._furthest_spacing_arcs(arcs, self.last_circle)
             else:
-                progress = self._furthest_spacing_shapely(arcs, self.cut_area_total)
+                progress = self._furthest_spacing_shapely(
+                    arcs, self.cut_area_total)
 
             desired_step = self.step
             if radius < CORNER_ZOOM:
@@ -527,25 +549,27 @@ class ToolPath:
 
         if best_distance > voronoi_edge.length:
             if best_progress < desired_step / 20:
-                # Ignore trivial edge ends.
+                # Ignore trivially thin arcs at the end of a voronoi edge.
                 return (distance, [])
             best_distance = voronoi_edge.length
 
         if distance != best_distance or progress != best_progress:
             distance = best_distance
             progress = best_progress
-            pos, radius = self._arc_at_distance(distance + dist_offset, edge_extended)
+            pos, radius = self._arc_at_distance(
+                distance + dist_offset, edge_extended)
             circle = create_circle(Point(pos), radius, self.winding_dir)
             arcs = arcs_from_circle_diff(
-                    circle, self.cut_area_total, self.winding_dir, color_overide)
+                circle, self.cut_area_total, self.winding_dir, color_overide)
 
         distance_remain = voronoi_edge.length - distance
         if count == ITERATION_COUNT:
+            # Log some debug data.
             self.arc_fail_count += 1
             log("\tDid not find an arc that fits. Spacing/Desired: "
-                    f"{round(progress, 3)}/{desired_step}"
-                    "\tdistance remaining: "
-                    f"{round(distance_remain, 3)}")
+                f"{round(progress, 3)}/{desired_step}"
+                "\tdistance remaining: "
+                f"{round(distance_remain, 3)}")
             if progress < desired_step:
                 if (self.worst_undersize_arc is None or
                         abs(progress - desired_step) >
@@ -618,11 +642,17 @@ class ToolPath:
 
         line = LineString(line_coords)
 
-        return self._colapse_dupe_points(line)
+        return _colapse_dupe_points(line)
 
     def _arcs_to_path(self, arcs: List[ArcData]) -> None:
+        """
+        Process list list of arcs, calculate tool path to join one to the next
+        and apply them to the self.path parameter.
+
+        Note: This function modifies the arcs parameter in place.
+        """
         if len(arcs) <= 1:
-            return []
+            return
 
         last_arc = None
         while arcs:
@@ -631,29 +661,36 @@ class ToolPath:
                 self.path.append(join_arcs(last_arc, arc, self.cut_area_total))
             self.path.append(arc)
             last_arc = arc
-
+        assert last_arc
         arcs.append(last_arc)
 
     def _get_arcs(self, timeslice: int = 0):
+        # TODO: Deprecated. remove.
+        return self.get_arcs(timeslice)
+
+    def get_arcs(self, timeslice: int = 0):
         """
         A generator method to create the path.
 
         Class instance properties:
             self.generate: bool: Whether or not to yield.
-        
+                False: Do not yield. Generate all data in one shot.
+                True: Yield an estimated ratio of path completion.
+
         Arguments:
             timeslice: int: How long to generate arcs for before yielding (ms).
         """
         start_time = round(time.time() * 1000)  # ms
         self._reset()
-        
+
         arcs: List[ArcData] = []
-        start_vertex: Optional[Tuple[float, float]] = self.start_point.coords[0]
+        start_vertex: Optional[Tuple[float, float]
+                               ] = self.start_point.coords[0]
 
         while start_vertex is not None:
             combined_edge = self._join_branches(start_vertex)
             if not combined_edge:
-                start_vertex = self._chose_path_remainder()
+                start_vertex = self._choose_next_path()
                 continue
 
             dist = 0.0
@@ -666,7 +703,7 @@ class ToolPath:
                 if dist <= last_dist:
                     # Getting worse not better or staving the same.
                     # Likely stuck.
-                    stuck_count /= 2
+                    stuck_count = int(stuck_count / 2)
 
                 arcs += sub_arcs
 
@@ -688,16 +725,17 @@ class ToolPath:
 
             if stuck_count <= 0:
                 # TODO: No evidence of this happening for a while. Remove it?
-                print(f"stuck: {round(dist, 2)} / {round(combined_edge.length, 2)}")
+                print(
+                    f"stuck: {round(dist, 2)} / {round(combined_edge.length, 2)}")
                 self.path_fail_count += 1
 
-            start_vertex = self._chose_path_remainder(combined_edge.coords[-1])
+            start_vertex = self._choose_next_path(combined_edge.coords[-1])
 
-        yield 1.0
+        if timeslice:
+            yield 1.0
 
         assert not self.open_paths
         log(f"{self.loop_count=}")
         log(f"{self.arc_fail_count=}")
         log(f"{len(self.path)=}")
         log(f"{self.path_fail_count=}")
-

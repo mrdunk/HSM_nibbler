@@ -136,16 +136,38 @@ def test_file(filepath: str, overlap: float, winding: geometry.ArcDir) -> Result
             worst_oversize_arc
             ) 
 
+def help(progname: str):
+    print("A program to exercise the CAM HSM 'peeling' algorithm.\n\n"
+            "It uses the library to generate CAM paths for each .dxf CAD test "
+            "file to gather statistics.\n"
+            "It will search the nearby path for test cases is no path is specified.\n\n"
+            "Usage:\n"
+            "  {progname} [dxf_files_glob]\n"
+            "eg:\n"
+            "  {progname}\n"
+            "  {progname} ./some/dir/\*.dxf\n"
+            "  {progname} ./test_cases/curves\*.dxf\n".format(progname=progname))
+
 def main(argv):
+    """
+    A program to exercise the CAM HSM 'peeling' algorithm.
+    Run with --help parameter for usage info.
+    """
     signal.signal(signal.SIGINT, signal_handler)
 
-    path = "../**/*.dxf"
+    if {"-h", "--h", "-help", "--help", "help"} & set(argv):
+        help(argv[0])
+        return 0
+
+    paths = ["../**/*.dxf", "./**/*.dxf"]
     if len(argv) >= 2:
-        path = argv[1]
+        paths = [argv[1]]
 
     results = []
 
-    filepaths = glob(path)
+    filepaths = []
+    for path in paths:
+        filepaths += glob(path)
     #windings = [geometry.ArcDir.CW, geometry.ArcDir.CCW]
     windings = [geometry.ArcDir.CW,]
     #overlaps = [0.4, 0.8, 1.6, 3.2, 6.4]
