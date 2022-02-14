@@ -47,7 +47,7 @@ CORNER_ZOOM_EFFECT = 0.75
 class ArcDir(Enum):
     CW = 0
     CCW = 1
-    # Closest = 2  # TODO
+    Closest = 2
 
 
 ArcData = NamedTuple("Arc", [
@@ -77,7 +77,8 @@ def join_arcs(start: ArcData, end: ArcData, safe_area: Polygon) -> LineData:
     """
     Generate CAM tool path to join the end of one arc to the beginning of the next.
     """
-    path = LineString([start.path.coords[-1], end.path.coords[0]])
+    #path = LineString([start.path.coords[-1], end.path.coords[0]])
+    path = LineString([start.start, end.end])
     safe = path.covered_by(safe_area)
     return LineData(start.start, end.end, path, safe)
 
@@ -85,19 +86,14 @@ def join_arcs(start: ArcData, end: ArcData, safe_area: Polygon) -> LineData:
 def create_circle(
         origin: Point,
         radius: float,
-        winding_dir: ArcDir,
         path: Optional[LineString] = None) -> ArcData:
     """
     Generate a circle that will be split into arcs to be part of the toolpath later.
     """
     span_angle = 2 * math.pi
-    if winding_dir == ArcDir.CCW:
-        span_angle = -span_angle
     if path is None:
         return ArcData(
             origin, radius, None, None, 0, span_angle, origin.buffer(radius).boundary, "")
-    # Warning: For this branch no check is done to ensure path has correct
-    # winding direction.
     return ArcData(origin, radius, None, None, 0, span_angle, path, "")
 
 
@@ -136,6 +132,8 @@ def create_arc_from_path(
 
     ds = (start_angle - mid_angle) % (2 * math.pi)
     de = (mid_angle - end_angle) % (2 * math.pi)
+    #assert ((ds > 0 and de > 0 and winding_dir == ArcDir.CW) or
+    #        (ds < 0 and de < 0 and winding_dir == ArcDir.CCW))
     if ((ds > 0 and de > 0 and winding_dir == ArcDir.CCW) or
             (ds < 0 and de < 0 and winding_dir == ArcDir.CW)):
         # Needs reversed.
@@ -221,10 +219,12 @@ class ToolPath:
         self.start_point: Point
         self.start_radius: float
         self.start_point, self.start_radius = self.voronoi.widest_gap()
+        self.current_winding = self.winding_dir
+        self._set_winding()
 
         # Assume starting circle is already cut.
         self.last_circle: Optional[ArcData] = create_circle(
-            self.start_point, self.start_radius, self.winding_dir)
+            self.start_point, self.start_radius)
         self.cut_area_total = Polygon(self.last_circle.path)
 
         self.arc_fail_count: int = 0
@@ -243,6 +243,13 @@ class ToolPath:
         self.path_len_total: float = 0.0
         for edge in self.voronoi.edges.values():
             self.path_len_total += edge.length
+
+    def _set_winding(self) -> None:
+        if self.winding_dir == ArcDir.Closest:
+            if self.current_winding == ArcDir.CW:
+                self.current_winding = ArcDir.CCW
+            else:
+                self.current_winding = ArcDir.CW
 
     def calculate_path(self) -> None:
         """ Reset path and restart from beginning. """
@@ -367,17 +374,19 @@ class ToolPath:
         """
         Calculate maximum step_over between 2 arcs.
         """
-        spacing = -1
+        #return self._furthest_spacing_shapely(arcs, last_circle.path)
+        spacing = -self.voronoi.max_dist
 
         for arc in arcs:
             spacing = max(spacing,
                           last_circle.origin.hausdorff_distance(arc.path) - last_circle.radius)
 
-            # for index in range(0, len(arc.path.coords), 1):
+            #for index in range(0, len(arc.path.coords), 1):
             #    coord = arc.path.coords[index]
             #    spacing = max(spacing,
             #            Point(coord).distance(last_circle.origin) - last_circle.radius)
-        return spacing
+
+        return abs(spacing)
 
     @classmethod
     def _furthest_spacing_shapely(
@@ -416,6 +425,7 @@ class ToolPath:
             self,
             voronoi_edge: LineString,
             start_distance: float,
+            min_distance: float,
             debug: bool = False
     ) -> Tuple[float, List[ArcData]]:
         """
@@ -445,6 +455,8 @@ class ToolPath:
               cut path.
             start_distance: The distance along voronoi_edge to start trying to
               find an arc that fits.
+            min_distance: Do not return arcs below this distance; The algorithm
+              is confused and traveling backwards.
         Returns:
             A tuple containing:
                 1. Distance along voronoi edge of the final arc.
@@ -500,12 +512,12 @@ class ToolPath:
             # Propose an arc.
             pos, radius = self._arc_at_distance(
                 distance + dist_offset, edge_extended)
-            circle = create_circle(pos, radius, self.winding_dir)
+            circle = create_circle(pos, radius)
 
             # Compare proposed arc to cut area.
             # We are only interested in sections that have not been cut yet.
             arcs = arcs_from_circle_diff(
-                circle, self.cut_area_total, self.winding_dir, color_overide)
+                circle, self.cut_area_total, self.current_winding, color_overide)
             if not arcs:
                 # arc is entirely hidden by previous cut geometry.
                 # Don't record it as an arc that needs drawn.
@@ -518,8 +530,7 @@ class ToolPath:
             if self.last_circle:
                 progress = self._furthest_spacing_arcs(arcs, self.last_circle)
             else:
-                progress = self._furthest_spacing_shapely(
-                    arcs, self.cut_area_total)
+                progress = self._furthest_spacing_shapely(arcs, self.cut_area_total)
 
             desired_step = self.step
             if radius < CORNER_ZOOM:
@@ -528,7 +539,8 @@ class ToolPath:
                 desired_step = self.step - CORNER_ZOOM_EFFECT * multiplier
 
             if (abs(desired_step - progress) < abs(desired_step - best_progress)
-                    and distance > 0):
+                    #and distance > 0
+                    ):
                 # Better fit.
                 best_progress = progress
                 best_distance = distance
@@ -547,20 +559,28 @@ class ToolPath:
         log_arc += f"{best_progress=}\t{best_distance=}\t{voronoi_edge.length=}\n"
         log_arc += "\t--------"
 
-        if best_distance > voronoi_edge.length:
-            if best_progress < desired_step / 20:
-                # Ignore trivially thin arcs at the end of a voronoi edge.
+        if count == ITERATION_COUNT:
+            color_overide = "red"
+            if (self._furthest_spacing_shapely(arcs, self.cut_area_total) < desired_step / 20 and
+                    distance < min_distance):
+                # These are a common source of noise.
+                # Not sure why exactly they occur but 
                 return (distance, [])
+
+        if best_distance > voronoi_edge.length:
+        #    if best_progress < desired_step / 20:
+        #        # Ignore trivially thin arcs at the end of a voronoi edge.
+        #        return (distance, [])
             best_distance = voronoi_edge.length
 
-        if distance != best_distance or progress != best_progress:
+        if distance != best_distance or progress != best_progress or color_overide is not None:
             distance = best_distance
             progress = best_progress
             pos, radius = self._arc_at_distance(
                 distance + dist_offset, edge_extended)
-            circle = create_circle(Point(pos), radius, self.winding_dir)
+            circle = create_circle(Point(pos), radius)
             arcs = arcs_from_circle_diff(
-                circle, self.cut_area_total, self.winding_dir, color_overide)
+                circle, self.cut_area_total, self.current_winding, color_overide)
 
         distance_remain = voronoi_edge.length - distance
         if count == ITERATION_COUNT:
@@ -589,6 +609,12 @@ class ToolPath:
         assert circle is not None
         self.last_circle = circle
         self.cut_area_total = self.cut_area_total.union(Polygon(circle.path))
+
+        #if count == ITERATION_COUNT:
+        #    return (distance, [])
+        #    print(f"{progress=}\t{start_distance=}\t{distance=}i\t{min_distance=}")
+
+        self._set_winding()
 
         return (distance, arcs)
 
@@ -694,32 +720,33 @@ class ToolPath:
                 continue
 
             dist = 0.0
-            last_dist = dist
+            best_dist = dist
             stuck_count = int(combined_edge.length * 10 / self.step + 10)
             while dist < combined_edge.length and stuck_count > 0:
                 stuck_count -= 1
-                dist, sub_arcs = self._calculate_arc(combined_edge, dist)
+                dist, sub_arcs = self._calculate_arc(combined_edge, dist, best_dist)
 
-                if dist <= last_dist:
-                    # Getting worse not better or staving the same.
-                    # Likely stuck.
+                self.path_len_progress -= best_dist
+                self.path_len_progress += dist
+
+                if dist < best_dist:
+                    # Getting worse not better or staying the same.
+                    # This can happen legitimately but is an indicatio  we may be 
+                    # stuck.
                     stuck_count = int(stuck_count / 2)
+                else:
+                    best_dist = dist
 
                 arcs += sub_arcs
 
                 if len(arcs) > 10:
                     self._arcs_to_path(arcs)
 
-                self.path_len_progress -= last_dist
-                self.path_len_progress += dist
-
-                if timeslice:
+                if timeslice >= 0 and self.generate:
                     now = round(time.time() * 1000)  # (ms)
                     if start_time + timeslice < now:
                         yield min(0.999, self.path_len_progress / self.path_len_total)
                         start_time = round(time.time() * 1000)  # (ms)
-
-                last_dist = dist
 
             self._arcs_to_path(arcs)
 
@@ -731,7 +758,7 @@ class ToolPath:
 
             start_vertex = self._choose_next_path(combined_edge.coords[-1])
 
-        if timeslice:
+        if timeslice and self.generate:
             yield 1.0
 
         assert not self.open_paths

@@ -13,6 +13,7 @@ from tabulate import tabulate
 import time
 
 import ezdxf
+from shapely.geometry import Polygon  # type: ignore
 
 import dxf
 import geometry
@@ -85,17 +86,18 @@ def test_file(filepath: str, overlap: float, winding: geometry.ArcDir) -> Result
     shape = dxf.dxf_to_polygon(modelspace)
     
     time_run = time.time()
-    toolpath = geometry.ToolPath(shape, overlap, winding)
+    toolpath = geometry.ToolPath(shape, overlap, winding, generate=False)
     time_run -= time.time()
 
-    #polygon_remaining = toolpath.polygon.difference(toolpath.cut_area_total)
-    #polygon_erroded = polygon_remaining.buffer(-overlap / 2.0)
-    path_dilated = toolpath.cut_area_total.buffer(overlap)
-    polygon_remaining = toolpath.polygon.difference(path_dilated)
+    polygon_remaining = Polygon(toolpath.polygon)#.buffer(-overlap))
+    center_circle = toolpath.start_point.buffer(toolpath.start_radius)
+    polygon_remaining = polygon_remaining.difference(center_circle)
+    for element in toolpath.path:
+        if type(element).__name__ == "Arc":
+            polygon_remaining = polygon_remaining.difference(
+                    element.path.buffer(overlap))
 
     polygon_area = round(toolpath.polygon.area, 4)
-    #uncut_area = round(polygon_erroded.area, 4)
-    #uncut_ratio = round(uncut_area/polygon_area, 4)
     uncut_area = round(polygon_remaining.area, 4)
     uncut_ratio = round(polygon_remaining.area/polygon_area, 4)
 

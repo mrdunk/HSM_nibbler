@@ -82,11 +82,12 @@ def main(argv):
         plt.plot(x, y, c="orange", linewidth=2)
 
     # Generate tool path.
-    toolpath = geometry.ToolPath(shape, step_size, geometry.ArcDir.CW, generate=True)
-    timeslice = 20  # ms
+    toolpath = geometry.ToolPath(shape, step_size, geometry.ArcDir.Closest, generate=True)
+    timeslice = 0  # ms
     for index, progress in enumerate(toolpath.get_arcs(timeslice)):
         print(index, progress)
-
+        #if index == 115:
+        #    break
         # You have access to toolpath.path here.
         # Draw what's there so far; it will ot change position in the buffer.
 
@@ -108,7 +109,7 @@ def main(argv):
         if type(element).__name__ == "Arc":
             x, y = element.path.xy
             if element.debug:
-                plt.plot(x, y, c=element.debug, linewidth=1)
+                plt.plot(x, y, c=element.debug, linewidth=3)
             else:
                 plt.plot(x, y, c="green", linewidth=1)
             #plt.plot(element.origin.x, element.origin.y, "o")
@@ -116,7 +117,7 @@ def main(argv):
         elif type(element).__name__ == "Line":
             x, y = element.path.xy
             if element.safe:
-                #plt.plot(x, y, linestyle='--', c="blue", linewidth=1)
+                plt.plot(x, y, linestyle='--', c="blue", linewidth=1)
                 pass
             else:
                 plt.plot(x, y, c="orange", linewidth=1)
