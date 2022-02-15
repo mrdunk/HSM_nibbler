@@ -731,7 +731,7 @@ class ToolPath:
 
                 arcs += sub_arcs
 
-                if len(arcs) > 10 or True:
+                if len(arcs) > 10:
                     self._arcs_to_path(arcs)
 
                 if timeslice >= 0 and self.generate:
