@@ -134,17 +134,17 @@ def create_arc_from_path(
     de = (mid_angle - end_angle) % (2 * math.pi)
     #assert ((ds > 0 and de > 0 and winding_dir == ArcDir.CW) or
     #        (ds < 0 and de < 0 and winding_dir == ArcDir.CCW))
-    if ((ds > 0 and de > 0 and winding_dir == ArcDir.CCW) or
-            (ds < 0 and de < 0 and winding_dir == ArcDir.CW)):
+    if ((ds > 0 and de > 0 and winding_dir == ArcDir.CW) or
+            (ds < 0 and de < 0 and winding_dir == ArcDir.CCW)):
         # Needs reversed.
         path = LineString(path.coords[::-1])
         start = Point(path.coords[0])
         end = Point(path.coords[-1])
         start_angle, end_angle = end_angle, start_angle
 
-    if winding_dir == ArcDir.CW:
+    if winding_dir == ArcDir.CCW:
         span_angle = (end_angle - start_angle) % (2 * math.pi)
-    elif winding_dir == ArcDir.CCW:
+    elif winding_dir == ArcDir.CW:
         span_angle = -((start_angle - end_angle) % (2 * math.pi))
 
     return ArcData(origin, radius, start, end, start_angle, span_angle, path, debug)
