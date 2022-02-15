@@ -561,16 +561,12 @@ class ToolPath:
 
         if count == ITERATION_COUNT:
             color_overide = "red"
-            if (self._furthest_spacing_shapely(arcs, self.cut_area_total) < desired_step / 20 and
-                    distance < min_distance):
-                # These are a common source of noise.
-                # Not sure why exactly they occur but 
-                return (distance, [])
+            if distance < min_distance:
+                # Moving the wrong way along the voronoi edge.
+                # Only happens when we've been to the end of an edge already.
+                return (voronoi_edge.length, [])
 
         if best_distance > voronoi_edge.length:
-        #    if best_progress < desired_step / 20:
-        #        # Ignore trivially thin arcs at the end of a voronoi edge.
-        #        return (distance, [])
             best_distance = voronoi_edge.length
 
         if distance != best_distance or progress != best_progress or color_overide is not None:
@@ -609,10 +605,6 @@ class ToolPath:
         assert circle is not None
         self.last_circle = circle
         self.cut_area_total = self.cut_area_total.union(Polygon(circle.path))
-
-        #if count == ITERATION_COUNT:
-        #    return (distance, [])
-        #    print(f"{progress=}\t{start_distance=}\t{distance=}i\t{min_distance=}")
 
         self._set_winding()
 
@@ -739,7 +731,7 @@ class ToolPath:
 
                 arcs += sub_arcs
 
-                if len(arcs) > 10:
+                if len(arcs) > 10 or True:
                     self._arcs_to_path(arcs)
 
                 if timeslice >= 0 and self.generate:
@@ -751,7 +743,6 @@ class ToolPath:
             self._arcs_to_path(arcs)
 
             if stuck_count <= 0:
-                # TODO: No evidence of this happening for a while. Remove it?
                 print(
                     f"stuck: {round(dist, 2)} / {round(combined_edge.length, 2)}")
                 self.path_fail_count += 1
