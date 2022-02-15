@@ -62,7 +62,7 @@ def main(argv):
     else:
         step_size = 1
 
-    print(f"{filename=}\n{step_size=}\n")
+    print(f"filename: {filename}\n step_size: {step_size}\n")
 
     modelspace = dxf_data.modelspace()
 
@@ -83,6 +83,7 @@ def main(argv):
 
     # Generate tool path.
     toolpath = geometry.ToolPath(shape, step_size, geometry.ArcDir.Closest, generate=True)
+    #toolpath = geometry.ToolPath(shape, step_size, geometry.ArcDir.CW, generate=True)
     timeslice = 0  # ms
     for index, progress in enumerate(toolpath.get_arcs(timeslice)):
         print(index, progress)

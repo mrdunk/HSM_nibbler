@@ -143,7 +143,8 @@ class VoronoiCenters:
                             # Let's just assume a straight line edge in these cases.
                             # This is a particular problem when duplicate points in
                             # input data create a line of zero length.
-                            log(f"BORKED VORONOI: \t{geom_points=}\t{geom_edges=}")
+                            log("BORKED VORONOI: \t"
+                                "geom_points: {geom_points}\tgeom_edges: {geom_edges}")
                             line = LineString((
                                 round_coord((start_vert.X, start_vert.Y)),
                                 round_coord((end_vert.X, end_vert.Y))

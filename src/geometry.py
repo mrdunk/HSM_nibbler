@@ -554,9 +554,9 @@ class ToolPath:
             modifier = pid.send((desired_step, progress))
             distance += modifier
 
-            #log_arc += f"\t{start_distance}\t{distance=}\t{progress=}\t{best_progress=}\t{modifier=}\n"
+            #log_arc += f"\t{start_distance}\t{distance}\t{progress}\t{best_progress}\t{modifier}\n"
 
-        log_arc += f"{best_progress=}\t{best_distance=}\t{voronoi_edge.length=}\n"
+        log_arc += f"progress: {best_progress}\tdistance: {best_distance}\tlength: {voronoi_edge.length}\n"
         log_arc += "\t--------"
 
         if count == ITERATION_COUNT:
@@ -762,7 +762,7 @@ class ToolPath:
             yield 1.0
 
         assert not self.open_paths
-        log(f"{self.loop_count=}")
-        log(f"{self.arc_fail_count=}")
-        log(f"{len(self.path)=}")
-        log(f"{self.path_fail_count=}")
+        log(f"loop_count: {self.loop_count}")
+        log(f"arc_fail_count: {self.arc_fail_count}")
+        log(f"len(path): {len(self.path)}")
+        log(f"path_fail_count: {self.path_fail_count}")
