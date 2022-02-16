@@ -78,7 +78,7 @@ def join_arcs(start: ArcData, end: ArcData, safe_area: Polygon) -> LineData:
     Generate CAM tool path to join the end of one arc to the beginning of the next.
     """
     #path = LineString([start.path.coords[-1], end.path.coords[0]])
-    path = LineString([start.start, end.end])
+    path = LineString([start.end, end.start])
     safe = path.covered_by(safe_area)
     return LineData(start.start, end.end, path, safe)
 

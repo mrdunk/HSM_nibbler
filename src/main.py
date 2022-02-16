@@ -82,13 +82,14 @@ def main(argv):
         plt.plot(x, y, c="orange", linewidth=2)
 
     # Generate tool path.
-    toolpath = geometry.ToolPath(shape, step_size, geometry.ArcDir.Closest, generate=True)
-    #toolpath = geometry.ToolPath(shape, step_size, geometry.ArcDir.CW, generate=True)
+    #toolpath = geometry.ToolPath(shape, step_size, geometry.ArcDir.Closest, generate=True)
+    toolpath = geometry.ToolPath(shape, step_size, geometry.ArcDir.CW, generate=True)
     timeslice = 0  # ms
     for index, progress in enumerate(toolpath.get_arcs(timeslice)):
         print(index, progress)
-        #if index == 115:
+        #if index == 173:
         #    break
+
         # You have access to toolpath.path here.
         # Draw what's there so far; it will ot change position in the buffer.
 
@@ -118,15 +119,12 @@ def main(argv):
         elif type(element).__name__ == "Line":
             x, y = element.path.xy
             if element.safe:
-                plt.plot(x, y, linestyle='--', c="blue", linewidth=1)
+                #plt.plot(x, y, linestyle='--', c="blue", linewidth=1)
                 pass
             else:
                 plt.plot(x, y, c="orange", linewidth=1)
 
     #plt.plot(toolpath.start_point.x, toolpath.start_point.y, 'o', c="black")
-    #for arc_centre, edge_count in toolpath.voronoi.dilated_vertexes.items():
-    #    if edge_count > 10:
-    #        plt.plot(arc_centre[0], arc_centre[1], 'o', c="black")
 
     plt.gca().set_aspect('equal')
     plt.show()
