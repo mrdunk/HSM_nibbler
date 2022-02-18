@@ -106,6 +106,11 @@ def main(argv):
         plt.plot(x[0], y[0], 'x', c="red")
         plt.plot(x[-1], y[-1], 'x', c="red")
 
+    # Starting circle.
+    starting_circle = geometry.create_circle(toolpath.start_point, toolpath.start_radius).path
+    x, y = starting_circle.xy
+    plt.plot(x, y, c="orange", linewidth=1)
+
     # Display path.
     for element in toolpath.path:
         if type(element).__name__ == "Arc":

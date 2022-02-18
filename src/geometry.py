@@ -693,7 +693,11 @@ class ToolPath:
         start_time = round(time.time() * 1000)  # ms
         self._reset()
 
-        arcs: List[ArcData] = []
+        arcs: List[ArcData] = [
+                create_arc_from_path(
+                    self.start_point, self.current_winding, self.last_circle.path)
+                ]
+
         start_vertex: Optional[Tuple[float, float]
                                ] = self.start_point.coords[0]
 
