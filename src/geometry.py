@@ -147,7 +147,7 @@ def arcs_from_circle_diff(
         polygon: Polygon,
         winding_dir: ArcDir,
         debug: str = None
-) -> List[ArcData]:
+        ) -> List[ArcData]:
     """ Return any sections of circle that do not overlap polygon. """
     line_diff = circle.path.difference(polygon)
     if not line_diff:
@@ -218,6 +218,7 @@ class ToolPath:
         self.last_circle: Optional[ArcData] = create_circle(
             self.start_point, self.start_radius)
         self.cut_area_total = Polygon(self.last_circle.path)
+        self.last_arc: Optional[ArcData] = None
 
         self.arc_fail_count: int = 0
         self.path_fail_count: int = 0
@@ -230,6 +231,7 @@ class ToolPath:
 
         self.path: List[Union[ArcData, LineData]] = []
         self.joined_path_data = self.path  # TODO: Deprecated.
+        self.pending_arcs: List[List[ArcData]] = []
 
         self.path_len_progress: float = 0.0
         self.path_len_total: float = 0.0
@@ -661,18 +663,12 @@ class ToolPath:
 
         Note: This function modifies the arcs parameter in place.
         """
-        if len(arcs) <= 1:
-            return
-
-        last_arc = None
         while arcs:
             arc = arcs.pop(0)
-            if last_arc is not None:
-                self.path.append(join_arcs(last_arc, arc, self.cut_area_total))
+            if self.last_arc is not None:
+                self.path.append(join_arcs(self.last_arc, arc, self.cut_area_total))
                 self.path.append(arc)
-            last_arc = arc
-        assert last_arc
-        arcs.append(last_arc)
+            self.last_arc = arc
 
     def _get_arcs(self, timeslice: int = 0):
         # TODO: Deprecated. remove.
@@ -693,10 +689,11 @@ class ToolPath:
         start_time = round(time.time() * 1000)  # ms
         self._reset()
 
-        arcs: List[ArcData] = [
-                create_arc_from_path(
-                    self.start_point, self.current_winding, self.last_circle.path)
-                ]
+        assert self.last_circle
+        self._queue_arcs([
+            create_arc_from_path(
+                self.start_point, self.current_winding, self.last_circle.path)
+            ])
 
         start_vertex: Optional[Tuple[float, float]
                                ] = self.start_point.coords[0]
@@ -712,23 +709,20 @@ class ToolPath:
             stuck_count = int(combined_edge.length * 10 / self.step + 10)
             while dist < combined_edge.length and stuck_count > 0:
                 stuck_count -= 1
-                dist, sub_arcs = self._calculate_arc(combined_edge, dist, best_dist)
+                dist, new_arcs = self._calculate_arc(combined_edge, dist, best_dist)
 
                 self.path_len_progress -= best_dist
                 self.path_len_progress += dist
 
                 if dist < best_dist:
                     # Getting worse not better or staying the same.
-                    # This can happen legitimately but is an indicatio  we may be
+                    # This can happen legitimately but is an indication we may be
                     # stuck.
                     stuck_count = int(stuck_count / 2)
                 else:
                     best_dist = dist
 
-                arcs += sub_arcs
-
-                if len(arcs) > 10:
-                    self._arcs_to_path(arcs)
+                self._queue_arcs(new_arcs)
 
                 if timeslice >= 0 and self.generate:
                     now = round(time.time() * 1000)  # (ms)
@@ -736,7 +730,7 @@ class ToolPath:
                         yield min(0.999, self.path_len_progress / self.path_len_total)
                         start_time = round(time.time() * 1000)  # (ms)
 
-            self._arcs_to_path(arcs)
+            self._queue_arcs([])
 
             if stuck_count <= 0:
                 print(
@@ -753,3 +747,18 @@ class ToolPath:
         log(f"arc_fail_count: {self.arc_fail_count}")
         log(f"len(path): {len(self.path)}")
         log(f"path_fail_count: {self.path_fail_count}")
+
+    def _queue_arcs(self, new_arcs: List[ArcData]) -> None:
+        if len(new_arcs) != len(self.pending_arcs):
+            while self.pending_arcs:
+                to_process = self.pending_arcs.pop(-1)
+                self._arcs_to_path(to_process)
+
+        for index, arc in enumerate(new_arcs):
+            if index >= len(self.pending_arcs):
+                self.pending_arcs.append([])
+            self.pending_arcs[index].append(arc)
+
+        if len(self.pending_arcs) > 0 and len(self.pending_arcs[0]) > 10:
+            self._arcs_to_path(self.pending_arcs[0])
+
