@@ -669,7 +669,7 @@ class ToolPath:
             arc = arcs.pop(0)
             if last_arc is not None:
                 self.path.append(join_arcs(last_arc, arc, self.cut_area_total))
-            self.path.append(arc)
+                self.path.append(arc)
             last_arc = arc
         assert last_arc
         arcs.append(last_arc)
