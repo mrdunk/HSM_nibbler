@@ -77,24 +77,18 @@ def join_arcs(start: ArcData, end: ArcData, safe_area: Polygon) -> LineData:
     """
     Generate CAM tool path to join the end of one arc to the beginning of the next.
     """
-    #path = LineString([start.path.coords[-1], end.path.coords[0]])
     path = LineString([start.end, end.start])
     safe = path.covered_by(safe_area)
-    return LineData(start.start, end.end, path, safe)
+    return LineData(start.end, end.start, path, safe)
 
 
-def create_circle(
-        origin: Point,
-        radius: float,
-        path: Optional[LineString] = None) -> ArcData:
+def create_circle(origin: Point, radius: float) -> ArcData:
     """
     Generate a circle that will be split into arcs to be part of the toolpath later.
     """
     span_angle = 2 * math.pi
-    if path is None:
-        return ArcData(
-            origin, radius, None, None, 0, span_angle, origin.buffer(radius).boundary, "")
-    return ArcData(origin, radius, None, None, 0, span_angle, path, "")
+    return ArcData(
+        origin, radius, None, None, 0, span_angle, origin.buffer(radius).boundary, "")
 
 
 def create_arc_from_path(
@@ -132,19 +126,17 @@ def create_arc_from_path(
 
     ds = (start_angle - mid_angle) % (2 * math.pi)
     de = (mid_angle - end_angle) % (2 * math.pi)
-    #assert ((ds > 0 and de > 0 and winding_dir == ArcDir.CW) or
-    #        (ds < 0 and de < 0 and winding_dir == ArcDir.CCW))
-    if ((ds > 0 and de > 0 and winding_dir == ArcDir.CW) or
-            (ds < 0 and de < 0 and winding_dir == ArcDir.CCW)):
+    if ((ds > 0 and de > 0 and winding_dir == ArcDir.CCW) or
+            (ds < 0 and de < 0 and winding_dir == ArcDir.CW)):
         # Needs reversed.
         path = LineString(path.coords[::-1])
         start = Point(path.coords[0])
         end = Point(path.coords[-1])
         start_angle, end_angle = end_angle, start_angle
 
-    if winding_dir == ArcDir.CCW:
+    if winding_dir == ArcDir.CW:
         span_angle = (end_angle - start_angle) % (2 * math.pi)
-    elif winding_dir == ArcDir.CW:
+    elif winding_dir == ArcDir.CCW:
         span_angle = -((start_angle - end_angle) % (2 * math.pi))
 
     return ArcData(origin, radius, start, end, start_angle, span_angle, path, debug)
@@ -723,7 +715,7 @@ class ToolPath:
 
                 if dist < best_dist:
                     # Getting worse not better or staying the same.
-                    # This can happen legitimately but is an indicatio  we may be 
+                    # This can happen legitimately but is an indicatio  we may be
                     # stuck.
                     stuck_count = int(stuck_count / 2)
                 else:

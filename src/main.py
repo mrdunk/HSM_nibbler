@@ -82,12 +82,12 @@ def main(argv):
         plt.plot(x, y, c="orange", linewidth=2)
 
     # Generate tool path.
-    #toolpath = geometry.ToolPath(shape, step_size, geometry.ArcDir.Closest, generate=True)
-    toolpath = geometry.ToolPath(shape, step_size, geometry.ArcDir.CW, generate=True)
+    toolpath = geometry.ToolPath(shape, step_size, geometry.ArcDir.Closest, generate=True)
+    #toolpath = geometry.ToolPath(shape, step_size, geometry.ArcDir.CW, generate=True)
     timeslice = 0  # ms
     for index, progress in enumerate(toolpath.get_arcs(timeslice)):
         print(index, progress)
-        #if index == 173:
+        #if index == 100:
         #    break
 
         # You have access to toolpath.path here.
@@ -119,7 +119,7 @@ def main(argv):
         elif type(element).__name__ == "Line":
             x, y = element.path.xy
             if element.safe:
-                #plt.plot(x, y, linestyle='--', c="blue", linewidth=1)
+                plt.plot(x, y, linestyle='--', c="blue", linewidth=1)
                 pass
             else:
                 plt.plot(x, y, c="orange", linewidth=1)
