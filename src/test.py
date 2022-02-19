@@ -173,7 +173,7 @@ def main(argv):
     #windings = [geometry.ArcDir.CW, geometry.ArcDir.CCW]
     windings = [geometry.ArcDir.CW,]
     #overlaps = [0.4, 0.8, 1.6, 3.2, 6.4]
-    overlaps = [0.4, 1.6, 6.4]
+    overlaps = [0.4, 1.6]
     count = 0
     total_count = len(filepaths) * len(windings) * len(overlaps)
     for filepath in filepaths:

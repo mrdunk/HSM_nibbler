@@ -40,7 +40,7 @@ def round_coord(value: Tuple[float, float], dp: int = ROUND_DP) -> Tuple[float, 
 
 
 class VoronoiCenters:
-    def __init__(self, polygon: Polygon, tolerence: float = 0.1) -> None:
+    def __init__(self, polygon: Polygon, tolerence: float = 0.2) -> None:
         """
         Arguments:
             polygon: The geometer that we wish to generate a voronoi diagram inside.
@@ -354,9 +354,13 @@ class VoronoiCenters:
                     # roughly parallel we should still consider this edge for cleanup.
                     continue
 
-                if last_edge_angle is None or abs(edge_angle - last_edge_angle) < 0.3:
-                    # This voronoi edge section is either the first or roughly
-                    # co-linear with the first one so add it to the cleanup list.
+                if (last_edge_angle is None or
+                        abs(edge_angle - last_edge_angle) < 0.3 or
+                        (len(edges_i) == 2 and len(self.vertex_to_edges[vertex_end]) == 2)):
+                    # This voronoi edge section is one of the following:
+                    # 1. The first to be considered.
+                    # 2. Roughly co-linear with the previous section.
+                    # 3. Joins exactly one other edge at either end.
                     to_return.add(edge_i)
                     vertex_start = vertex_end
                     working = True
