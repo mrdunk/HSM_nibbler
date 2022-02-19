@@ -231,7 +231,7 @@ class ToolPath:
 
         self.path: List[Union[ArcData, LineData]] = []
         self.joined_path_data = self.path  # TODO: Deprecated.
-        self.pending_arcs: List[List[ArcData]] = []
+        self.pending_arc_queues: List[List[ArcData]] = []
 
         self.path_len_progress: float = 0.0
         self.path_len_total: float = 0.0
@@ -730,7 +730,7 @@ class ToolPath:
                         yield min(0.999, self.path_len_progress / self.path_len_total)
                         start_time = round(time.time() * 1000)  # (ms)
 
-            self._queue_arcs([])
+            self._flush_arc_queues()
 
             if stuck_count <= 0:
                 print(
@@ -748,17 +748,61 @@ class ToolPath:
         log(f"len(path): {len(self.path)}")
         log(f"path_fail_count: {self.path_fail_count}")
 
+    def _flush_arc_queues(self) -> None:
+        while self.pending_arc_queues:
+            to_process = self.pending_arc_queues.pop(-1)
+            self._arcs_to_path(to_process)
+
     def _queue_arcs(self, new_arcs: List[ArcData]) -> None:
-        if len(new_arcs) != len(self.pending_arcs):
-            while self.pending_arcs:
-                to_process = self.pending_arcs.pop(-1)
-                self._arcs_to_path(to_process)
+        """
+        When an arc intersects with an area that has already been cut the arc may
+        get split into multiple pieces.
+        When we cone to join the arcs we want to join the "left" arcs to each other
+        and the "right" arcs to each other. (There may be more than 2 sets as well.)
+        To do this we need to store arcs in separate queues. Each queue contains
+        arcs that should be joined to each other.
+        """
 
-        for index, arc in enumerate(new_arcs):
-            if index >= len(self.pending_arcs):
-                self.pending_arcs.append([])
-            self.pending_arcs[index].append(arc)
+        if len(new_arcs) != len(self.pending_arc_queues):
+            # Number of arcs has changed.
+            # A path of spilt arcs has either started or ended.
+            self._flush_arc_queues()
 
-        if len(self.pending_arcs) > 0 and len(self.pending_arcs[0]) > 10:
-            self._arcs_to_path(self.pending_arcs[0])
+        if not new_arcs:
+            return
+
+        if not self.pending_arc_queues:
+            # Create empty queues.
+            for _ in new_arcs:
+                self.pending_arc_queues.append([])
+
+        if len(new_arcs) == 1:
+            # Nothing complicated to do. Only one line of arcs so only one queue.
+            self.pending_arc_queues[0] += new_arcs
+        else:
+            if len(self.pending_arc_queues[0]) == 0:
+                # Queues are all empty. Doesn't matter what goes where.
+                for arc_i, arc in enumerate(new_arcs):
+                    self.pending_arc_queues[arc_i].append(arc)
+                return
+
+            # Need to put each arc in the queue with nearest predecessor.
+            for arc in new_arcs:
+                closest_queue = None
+                closest_dist = None
+                for queue in self.pending_arc_queues:
+                    dist = arc.path.distance(queue[0].path)
+                    if closest_dist is None or dist < closest_dist:
+                        closest_dist = dist
+                        closest_queue = queue
+                assert closest_queue is not None
+                closest_queue.append(arc)
+
+            # If queues have ended up different sizes, we have failed to identify
+            # the closest arcs to the queues.
+            # Flush everything to be safe.
+            for queue_index in range(1, len(self.pending_arc_queues)):
+                queue = self.pending_arc_queues[queue_index]
+                if len(queue) != len(self.pending_arc_queues[0]):
+                    self._flush_arc_queues()
 
