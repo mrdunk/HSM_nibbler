@@ -308,8 +308,8 @@ class VoronoiCenters:
 
     def _follow_cleanup_candidates(self, vertex: Vertex) -> Set[int]:
         """
-        Voronoi edges that touch self.polygon are sometimes not needed and should
-        be pruned.
+        Voronoi edges that touch self.polygon are sometimes not needed and are
+        candidates for pruning.
         eg: When the outer geometry contains an arc section, the arc will have been
         split into straight line facets. A voronoi edge will touch the point where
         these facets join. We do not need these voronoi edges so they should be pruned.
@@ -342,25 +342,25 @@ class VoronoiCenters:
                 edge_angle = math.atan2(
                     (vertex_start[0] - vertex_end[0]), (vertex_start[1] - vertex_end[1]))
 
-                if last_edge_angle is None:
-                    # This is the first edge section to be considered.
-                    # All future angles should be compared against this one for
-                    # co-linearity.
-                    assert len(edges_i) == 1
-                    last_edge_angle = edge_angle
-
                 if abs(LineString([vertex, vertex_end]).length -
-                       self.distance_from_geom(Point(vertex_end))) > self.tolerence:
-                    # This vertex_end is the far side of the arc center from the first section.
+                       self.distance_from_geom(Point(vertex_end))) >= self.tolerence:
+                    # The closest point on the outer geometry is closer that the end of the
+                    # end of the edges we are tracking.
+                    # This implies vertex_end is the far side of the arc center from the
+                    # first section.
                     # Not a candidate for cleanup.
+                    # TODO: We could also compare how parallel the line between vertex
+                    # and nearest pint is to the edges we are examining. If they are
+                    # roughly parallel we should still consider this edge for cleanup.
                     continue
 
                 if last_edge_angle is None or abs(edge_angle - last_edge_angle) < 0.3:
-                    # This voronoi edge section is roughly co-linear with the first
-                    # one so add it to the cleanup list.
+                    # This voronoi edge section is either the first or roughly
+                    # co-linear with the first one so add it to the cleanup list.
                     to_return.add(edge_i)
                     vertex_start = vertex_end
                     working = True
+                    last_edge_angle = edge_angle
                     break
 
         return to_return
