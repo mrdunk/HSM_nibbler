@@ -603,12 +603,14 @@ class ToolPath:
         self.last_circle = circle
         self.cut_area_total = self.cut_area_total.union(Polygon(circle.path))
 
-        self._set_winding()
-
         filtered_arcs = []
         for arc in arcs:
             if self._filter_arc(arc):
                 filtered_arcs.append(arc)
+
+        if filtered_arcs:
+            self._set_winding()
+
         return (distance, filtered_arcs)
 
     def _join_branches(self, start_vertex: Tuple[float, float]) -> LineString:
@@ -677,6 +679,7 @@ class ToolPath:
             if self.last_arc is not None:
                 self.path.append(join_arcs(self.last_arc, arc, self.cut_area_total))
                 self.path.append(arc)
+
             self.last_arc = arc
 
     def _get_arcs(self, timeslice: int = 0):
@@ -739,14 +742,14 @@ class ToolPath:
                         yield min(0.999, self.path_len_progress / self.path_len_total)
                         start_time = round(time.time() * 1000)  # (ms)
 
-            self._flush_arc_queues()
-
             if stuck_count <= 0:
                 print(
                     f"stuck: {round(dist, 2)} / {round(combined_edge.length, 2)}")
                 self.path_fail_count += 1
 
             start_vertex = self._choose_next_path(combined_edge.coords[-1])
+
+            self._flush_arc_queues()
 
         if timeslice and self.generate:
             yield 1.0
@@ -759,7 +762,7 @@ class ToolPath:
 
     def _flush_arc_queues(self) -> None:
         while self.pending_arc_queues:
-            to_process = self.pending_arc_queues.pop(-1)
+            to_process = self.pending_arc_queues.pop(0)
             self._arcs_to_path(to_process)
 
     def _queue_arcs(self, new_arcs: List[ArcData]) -> None:
@@ -772,48 +775,37 @@ class ToolPath:
         arcs that should be joined to each other.
         """
 
-        if len(new_arcs) != len(self.pending_arc_queues):
-            # Number of arcs has changed.
-            # A path of spilt arcs has either started or ended.
-            self._flush_arc_queues()
+        # Need to put each arc in the queue with nearest predecessor.
+        modified_queues = set()
+        for arc in new_arcs:
+            closest_queue = None
+            closest_queue_index = None
+            closest_dist = self.step
+            for queue_index, queue in enumerate(self.pending_arc_queues):
+                dist = arc.path.distance(queue[-1].path)
+                if dist < closest_dist:
+                    closest_dist = dist
+                    closest_queue = queue
+                    closest_queue_index = queue_index
+            if closest_queue is None:
+                # Not close to any predecessor. Create new queue.
+                closest_queue = []
+                closest_queue_index = len(self.pending_arc_queues)
+                self.pending_arc_queues.append(closest_queue)
+            closest_queue.append(arc)
+            modified_queues.add(closest_queue_index)
+            assert closest_queue is self.pending_arc_queues[closest_queue_index]
+            assert arc in closest_queue
 
-        if not new_arcs:
-            return
-
-        if not self.pending_arc_queues:
-            # Create empty queues.
-            for _ in new_arcs:
-                self.pending_arc_queues.append([])
-
-        if len(new_arcs) == 1:
-            # Nothing complicated to do. Only one line of arcs so only one queue.
-            self.pending_arc_queues[0] += new_arcs
-        else:
-            if len(self.pending_arc_queues[0]) == 0:
-                # Queues are all empty. Doesn't matter what goes where.
-                for arc_i, arc in enumerate(new_arcs):
-                    self.pending_arc_queues[arc_i].append(arc)
-                return
-
-            # Need to put each arc in the queue with nearest predecessor.
-            for arc in new_arcs:
-                closest_queue = None
-                closest_dist = None
-                for queue in self.pending_arc_queues:
-                    dist = arc.path.distance(queue[0].path)
-                    if closest_dist is None or dist < closest_dist:
-                        closest_dist = dist
-                        closest_queue = queue
-                assert closest_queue is not None
-                closest_queue.append(arc)
-
-            # If queues have ended up different sizes, we have failed to identify
-            # the closest arcs to the queues.
-            # Flush everything to be safe.
-            for queue_index in range(1, len(self.pending_arc_queues)):
-                queue = self.pending_arc_queues[queue_index]
-                if len(queue) != len(self.pending_arc_queues[0]):
-                    self._flush_arc_queues()
+        # Queues need processed in the order they were created: FIFO.
+        # It is only safe to process the oldest queue (index: 0) as any younger
+        # queue may be a child of it.
+        # TODO: If we really wanted to, whenever there are any un-modified queues,
+        # we could process the contents of all the older queues even though they
+        # are still being appended to before processing the un-modifies queue(s).
+        if modified_queues and 0 not in modified_queues:
+            to_process = self.pending_arc_queues.pop(0)
+            self._arcs_to_path(to_process)
 
     def _filter_arc(self, arc: ArcData) -> Optional[ArcData]:
         """
