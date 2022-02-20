@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 import math
 
+from shapely.geometry.base import BaseGeometry  # type: ignore
 from shapely.geometry import LineString, Point, Polygon  # type: ignore
 from shapely.ops import linemerge, nearest_points  # type: ignore
 from shapely.validation import make_valid  # type: ignore
@@ -40,7 +41,7 @@ def round_coord(value: Tuple[float, float], dp: int = ROUND_DP) -> Tuple[float, 
 
 
 class VoronoiCenters:
-    def __init__(self, polygon: Polygon, tolerence: float = 0.2) -> None:
+    def __init__(self, polygon: Polygon, tolerence: float = 0.1) -> None:
         """
         Arguments:
             polygon: The geometer that we wish to generate a voronoi diagram inside.
@@ -256,17 +257,15 @@ class VoronoiCenters:
         del self.edge_to_vertex[edge_index]
         del self.edges[edge_index]
 
-    def distance_from_geom(self, point: Point) -> float:
+    def distance_from_geom(self, point: BaseGeometry) -> float:
         """
         Distance form nearest geometry edge. Note this edge may be the outer
         boundary or the edge of an island.
         """
-        radius = self.max_dist
+        distance = self.max_dist
         for ring in [self.polygon.exterior] + list(self.polygon.interiors):
-            nearest = nearest_points(point, ring)
-            dist = point.distance(nearest[1])
-            radius = min(radius, dist)
-        return radius
+            distance = min(distance, ring.distance(point))
+        return distance
 
     def _combine_edges(self, dont_merge: List[Tuple[float, float]]) -> None:
         """

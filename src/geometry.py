@@ -214,6 +214,11 @@ class ToolPath:
         self.current_winding = self.winding_dir
         self._set_winding()
 
+        # Used to detect when an arc is too close to the edge to be worthwhile.
+        self.dilated_polygon_boundaries = []
+        for ring in [self.polygon.exterior] + list(self.polygon.interiors):
+            self.dilated_polygon_boundaries.append(ring.buffer(self.step / 4))
+
         # Assume starting circle is already cut.
         self.last_circle: Optional[ArcData] = create_circle(
             self.start_point, self.start_radius)
@@ -247,8 +252,6 @@ class ToolPath:
 
     def calculate_path(self) -> None:
         """ Reset path and restart from beginning. """
-        self._reset()
-
         # Create the generator.
         generator = self.get_arcs()
 
@@ -602,7 +605,11 @@ class ToolPath:
 
         self._set_winding()
 
-        return (distance, arcs)
+        filtered_arcs = []
+        for arc in arcs:
+            if self._filter_arc(arc):
+                filtered_arcs.append(arc)
+        return (distance, filtered_arcs)
 
     def _join_branches(self, start_vertex: Tuple[float, float]) -> LineString:
         """
@@ -665,6 +672,8 @@ class ToolPath:
         """
         while arcs:
             arc = arcs.pop(0)
+            if arc is None:
+                continue
             if self.last_arc is not None:
                 self.path.append(join_arcs(self.last_arc, arc, self.cut_area_total))
                 self.path.append(arc)
@@ -805,4 +814,16 @@ class ToolPath:
                 queue = self.pending_arc_queues[queue_index]
                 if len(queue) != len(self.pending_arc_queues[0]):
                     self._flush_arc_queues()
+
+    def _filter_arc(self, arc: ArcData) -> Optional[ArcData]:
+        """
+        Remove any arc that is very close to the edge of the part in it's entirety.
+        """
+        if len(arc.path.coords) < 3:
+            return None
+        poly_arc = Polygon(arc.path)
+        for ring in self.dilated_polygon_boundaries:
+            if ring.contains(Polygon(poly_arc)):
+                return None
+        return arc
 
