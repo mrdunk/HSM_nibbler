@@ -84,7 +84,7 @@ def test_file(filepath: str, overlap: float, winding: geometry.ArcDir) -> Result
     dxf_data = ezdxf.readfile(filepath)
     modelspace = dxf_data.modelspace()
     shape = dxf.dxf_to_polygon(modelspace)
-    
+
     time_run = time.time()
     toolpath = geometry.ToolPath(shape, overlap, winding, generate=False)
     time_run -= time.time()
@@ -136,7 +136,7 @@ def test_file(filepath: str, overlap: float, winding: geometry.ArcDir) -> Result
             time_per_arc,
             worst_undersize_arc,
             worst_oversize_arc
-            ) 
+            )
 
 def help(progname: str):
     print("A program to exercise the CAM HSM 'peeling' algorithm.\n\n"

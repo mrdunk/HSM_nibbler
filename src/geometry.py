@@ -52,11 +52,12 @@ class ArcDir(Enum):
 
 ArcData = NamedTuple("Arc", [
     ("origin", Point),
-    ("radius", float),
+    ("radius", Optional[float]),
     ("start", Optional[Point]),
     ("end", Optional[Point]),
-    ("start_angle", float),
-    ("span_angle", float),
+    ("start_angle", Optional[float]),
+    ("span_angle", Optional[float]),
+    ("winding_dir", Optional[ArcDir]),
     # TODO: ("widest_at", Optional[Point]),
     # TODO: ("start_DOC", float),
     # TODO: ("end_DOC", float),
@@ -88,34 +89,49 @@ def create_circle(origin: Point, radius: float) -> ArcData:
     """
     span_angle = 2 * math.pi
     return ArcData(
-        origin, radius, None, None, 0, span_angle, origin.buffer(radius).boundary, "")
+        origin, radius, None, None, 0, span_angle, None, origin.buffer(radius).boundary, "")
 
 
 def create_arc_from_path(
         origin: Point,
-        winding_dir: ArcDir,
-        path_: LineString,
+        path: LineString,
         debug: str = None
 ) -> ArcData:
     """
     Save data for the arc sections of the path.
+    """
+    radius = None
+    start = None
+    end = None
+    start_angle = None
+    span_angle = None
+    winding_dir = None
+    debug = ""
+    return ArcData(origin, radius, start, end, start_angle, span_angle, winding_dir, path, debug)
+
+def complete_arc(
+        arc_data: ArcData,
+        winding_dir: ArcDir
+        ) -> ArcData:
+    """
     This is called a lot so any optimizations here save us time.
     """
+
     # Make copy of path since we may need to modify it.
-    path = LineString(path_)
+    path = LineString(arc_data.path)
 
     start_coord = path.coords[0]
     end_coord = path.coords[-1]
     start = Point(start_coord)
     end = Point(end_coord)
     mid = path.interpolate(0.5, normalized=True)
-    radius = origin.distance(start)
-    #assert abs((origin.distance(mid) - radius) / radius) < 0.01
-    #assert abs((origin.distance(end) - radius) / radius) < 0.01
+    radius = arc_data.origin.distance(start)
+    #assert abs((arc_data.origin.distance(mid) - radius) / radius) < 0.01
+    #assert abs((arc_data.origin.distance(end) - radius) / radius) < 0.01
 
     # Breaking these out once rather than separately inline later saves us ~7%
     # CPU time overall.
-    org_x, org_y = origin.xy
+    org_x, org_y = arc_data.origin.xy
     start_x, start_y = start_coord
     mid_x, mid_y = mid.xy
     end_x, end_y = end_coord
@@ -139,13 +155,21 @@ def create_arc_from_path(
     elif winding_dir == ArcDir.CCW:
         span_angle = -((start_angle - end_angle) % (2 * math.pi))
 
-    return ArcData(origin, radius, start, end, start_angle, span_angle, path, debug)
+    return ArcData(
+            arc_data.origin,
+            radius,
+            start,
+            end,
+            start_angle,
+            span_angle,
+            winding_dir,
+            path,
+            arc_data.debug)
 
 
 def arcs_from_circle_diff(
         circle: ArcData,
         polygon: Polygon,
-        winding_dir: ArcDir,
         debug: str = None
         ) -> List[ArcData]:
     """ Return any sections of circle that do not overlap polygon. """
@@ -159,8 +183,7 @@ def arcs_from_circle_diff(
 
     arcs = []
     for arc in line_diff.geoms:
-        arcs.append(create_arc_from_path(
-            circle.origin, winding_dir, arc, debug))
+        arcs.append(create_arc_from_path(circle.origin, arc, debug))
     return arcs
 
 
@@ -211,8 +234,6 @@ class ToolPath:
         self.start_point: Point
         self.start_radius: float
         self.start_point, self.start_radius = self.voronoi.widest_gap()
-        self.current_winding = self.winding_dir
-        self._set_winding()
 
         # Used to detect when an arc is too close to the edge to be worthwhile.
         self.dilated_polygon_boundaries = []
@@ -242,13 +263,6 @@ class ToolPath:
         self.path_len_total: float = 0.0
         for edge in self.voronoi.edges.values():
             self.path_len_total += edge.length
-
-    def _set_winding(self) -> None:
-        if self.winding_dir == ArcDir.Closest:
-            if self.current_winding == ArcDir.CW:
-                self.current_winding = ArcDir.CCW
-            else:
-                self.current_winding = ArcDir.CW
 
     def calculate_path(self) -> None:
         """ Reset path and restart from beginning. """
@@ -514,7 +528,7 @@ class ToolPath:
             # Compare proposed arc to cut area.
             # We are only interested in sections that have not been cut yet.
             arcs = arcs_from_circle_diff(
-                circle, self.cut_area_total, self.current_winding, color_overide)
+                circle, self.cut_area_total, color_overide)
             if not arcs:
                 # arc is entirely hidden by previous cut geometry.
                 # Don't record it as an arc that needs drawn.
@@ -573,7 +587,7 @@ class ToolPath:
                 distance + dist_offset, edge_extended)
             circle = create_circle(Point(pos), radius)
             arcs = arcs_from_circle_diff(
-                circle, self.cut_area_total, self.current_winding, color_overide)
+                circle, self.cut_area_total, color_overide)
 
         distance_remain = voronoi_edge.length - distance
         if count == ITERATION_COUNT:
@@ -607,9 +621,6 @@ class ToolPath:
         for arc in arcs:
             if self._filter_arc(arc):
                 filtered_arcs.append(arc)
-
-        if filtered_arcs:
-            self._set_winding()
 
         return (distance, filtered_arcs)
 
@@ -676,6 +687,19 @@ class ToolPath:
             arc = arcs.pop(0)
             if arc is None:
                 continue
+
+            winding_dir = self.winding_dir
+            if winding_dir == ArcDir.Closest:
+                if self.last_arc is None:
+                    winding_dir = ArcDir.CW
+                else:
+                    # TODO: We could improve this: Rather that taking the opposite
+                    # of the last arc, we could work out the closest end based on
+                    # the last drawn arc.
+                    winding_dir = ArcDir.CW if self.last_arc.winding_dir == ArcDir.CCW else ArcDir.CCW
+
+            arc = complete_arc(arc, winding_dir)
+
             if self.last_arc is not None:
                 self.path.append(join_arcs(self.last_arc, arc, self.cut_area_total))
                 self.path.append(arc)
@@ -683,7 +707,7 @@ class ToolPath:
             self.last_arc = arc
 
     def _get_arcs(self, timeslice: int = 0):
-        # TODO: Deprecated. remove.
+        # TODO: Deprecated. Remove.
         return self.get_arcs(timeslice)
 
     def get_arcs(self, timeslice: int = 0):
@@ -704,7 +728,7 @@ class ToolPath:
         assert self.last_circle
         self._queue_arcs([
             create_arc_from_path(
-                self.start_point, self.current_winding, self.last_circle.path)
+                self.start_point, self.last_circle.path)
             ])
 
         start_vertex: Optional[Tuple[float, float]
@@ -794,6 +818,7 @@ class ToolPath:
                 self.pending_arc_queues.append(closest_queue)
             closest_queue.append(arc)
             modified_queues.add(closest_queue_index)
+            assert closest_queue_index is not None
             assert closest_queue is self.pending_arc_queues[closest_queue_index]
             assert arc in closest_queue
 

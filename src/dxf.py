@@ -16,7 +16,7 @@ CIRCLE_RES = 500
 # Introduce coordinate jitter by clamping coordinates to this number of decimal places.
 # Used for testing.
 # Set to "0" to disable.
-DP = 1
+DP = 0
 
 def round_points(points):
     """ Used in testing. Clamps points to rounded coordinates. """

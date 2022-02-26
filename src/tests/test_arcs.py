@@ -47,7 +47,8 @@ class TestArc(unittest.TestCase):
 
         path = path[int(len(path) / 8) : int(7 * len(path) / 8)]
 
-        arc = geometry.create_arc_from_path(origin, winding_dir, LineString(path))
+        arc = geometry.create_arc_from_path(origin, LineString(path))
+        arc = geometry.complete_arc(arc, winding_dir)
 
         self.assertEqual(arc.origin, origin)
         self.assertEqual(arc.radius, radius)
@@ -84,7 +85,8 @@ class TestArc(unittest.TestCase):
 
         path = path[int(len(path) / 8) : int(7 * len(path) / 8)]
 
-        arc = geometry.create_arc_from_path(origin, winding_dir, LineString(path))
+        arc = geometry.create_arc_from_path(origin, LineString(path))
+        arc = geometry.complete_arc(arc, winding_dir)
 
         self.assertEqual(arc.origin, origin)
         self.assertEqual(arc.radius, radius)
@@ -121,6 +123,7 @@ class TestJoinArcs(unittest.TestCase):
                 end = Point(2, 1),
                 start_angle = -math.pi / 2,
                 span_angle = math.pi,
+                winding_dir = geometry.ArcDir.CW,
                 path = LineString([(0, 1), (1, 1.5), (2, 1)]), # Not very round.
                 debug = ""
                 )
@@ -131,6 +134,7 @@ class TestJoinArcs(unittest.TestCase):
                 end = Point(2, 2),
                 start_angle = -math.pi / 2,
                 span_angle = math.pi,
+                winding_dir = geometry.ArcDir.CW,
                 path = LineString([(0, 2), (1, 2.5), (2, 2)]), # Not very round.
                 debug = ""
                 )
