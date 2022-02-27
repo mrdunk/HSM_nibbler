@@ -5,7 +5,7 @@ Experimenting with CNC machining toolpaths.
 Run code against .dxf test patterns.
 """
 
-from typing import NamedTuple, Optional
+from typing import List, NamedTuple, Optional
 
 import argparse
 import os
@@ -18,13 +18,16 @@ import ezdxf
 import numpy as np  # type: ignore
 import matplotlib.pyplot as plt  # type: ignore
 import matplotlib.patches as patches  # type: ignore
-from shapely.geometry import MultiPolygon, Polygon  # type: ignore
+from shapely.geometry import LineString, MultiLineString, MultiPolygon, Polygon  # type: ignore
+from shapely.ops import linemerge  # type: ignore
 from tabulate import tabulate
 
 import dxf
 import geometry
 
 break_count: int = 0
+results = []
+
 
 Result = NamedTuple("Result", [
     ("filename", str),
@@ -42,8 +45,11 @@ def signal_handler(_, __):
     Actually break after the 2nd.
     """
     global break_count
+    global results
+
     break_count += 1
     if break_count >= 2:
+        print(tabulate(results, headers="keys"))
         sys.exit(0)
     print('Ctrl+C pressed. Finishing existing test. Ctrl+C again to quit immediately.')
 
@@ -53,6 +59,10 @@ def init_argparse() -> argparse.ArgumentParser:
         #usage="%(prog)s [OPTION] [FILE]...",
         description="A program to exercise the CAM HSM 'peeling' algorithm."
     )
+    parser.add_argument(
+        "-a", "--showarcs",
+        action='store_true',
+        help="Show the path the endmill takes.")
     parser.add_argument(
         "-f", "--tofile",
         nargs='?',
@@ -76,6 +86,7 @@ def init_argparse() -> argparse.ArgumentParser:
 
 
 def draw(
+        combined_path: List[LineString],
         pocket: Polygon,
         cut_area: Polygon,
         crash_area: Polygon,
@@ -86,7 +97,7 @@ def draw(
         output_display: bool
 ) -> None:
     """Display cut path."""
-    _, ax = plt.subplots(1, 1, dpi=800)
+    fig, ax = plt.subplots(1, 1, dpi=800)
 
     def polygon(poly: Polygon, colour: str, fill: bool = True) -> None:
         """Draw a Shaplely Polygon on matplotlib.pyplot. """
@@ -120,6 +131,9 @@ def draw(
     polygon(crash_area, "red")
     polygon(pocket, "blue", fill=False)
 
+    for path in combined_path:
+        ax.plot(*path.xy, c="black", linewidth=0.01)
+
     ax.axis('equal')
     if output_display:
         plt.show()
@@ -138,11 +152,16 @@ def draw(
 
         plt.savefig(os.path.join(output_path, new_filename))
 
+    plt.cla()
+    plt.clf()
+    plt.close(fig)
+    plt.close("all")
 
 def test_file(
         filepath: str,
         overlap: float,
         winding: geometry.ArcDir,
+        show_arcs: bool,
         output_path: Optional[str],
         output_display: bool
 ) -> Result:
@@ -162,21 +181,33 @@ def test_file(
     cut_area = toolpath.start_point.buffer(toolpath.start_radius + overlap / 2)
     crash_area = Polygon()
 
+    combined_path = []
+
+    last_path = None
     for element in toolpath.path:
+        if last_path is not None:
+            assert last_path.coords[-1] == element.path.coords[0]
+        last_path = element.path
+
         if type(element).__name__ == "Arc":
-            cut_area = cut_area.union(element.path.buffer(overlap / 2))
+            cut_area = cut_area.union(Polygon(element.path).buffer(overlap / 2))
+            if show_arcs:
+                combined_path.append(element.path)
         elif type(element).__name__ == "Line":
             if element.safe:
                 crash = element.path.buffer(overlap / 2).difference(cut_area)
                 crash_area = crash_area.union(crash)
+                if show_arcs:
+                    combined_path.append(element.path)
 
     uncut_area = toolpath.polygon.difference(cut_area)
 
-    cut_ratio = round(uncut_area.area / toolpath.polygon.area, 4)
+    cut_ratio = round(1.0 - uncut_area.area / toolpath.polygon.area, 4)
     crash_ratio = round(crash_area.area / toolpath.polygon.area, 4)
 
     if output_path or output_display:
         draw(
+            combined_path,
             toolpath.polygon,
             cut_area,
             crash_area,
@@ -200,16 +231,17 @@ def main():
     A program to exercise the CAM HSM 'peeling' algorithm.
     Run with --help parameter for usage info.
     """
+    global results
+
     signal.signal(signal.SIGINT, signal_handler)
 
     parser = init_argparse()
     args = parser.parse_args()
 
+    show_arcs = args.showarcs
     input_paths = args.input_paths
     output_path = args.tofile
     output_display = args.toscreen
-
-    results = []
 
     filepaths = []
     for path in input_paths:
@@ -225,8 +257,8 @@ def main():
             for winding in windings:
                 count += 1
                 try:
-                    results.append(
-                        test_file(filepath, overlap, winding, output_path, output_display))
+                    results.append(test_file(
+                        filepath, overlap, winding, show_arcs, output_path, output_display))
                     print(f"{count} of {total_count}")
                     print(results[-1])
                     print()

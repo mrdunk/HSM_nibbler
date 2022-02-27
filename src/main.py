@@ -82,8 +82,8 @@ def main(argv):
         plt.plot(x, y, c="orange", linewidth=2)
 
     # Generate tool path.
-    toolpath = geometry.ToolPath(shape, step_size, geometry.ArcDir.Closest, generate=True)
-    #toolpath = geometry.ToolPath(shape, step_size, geometry.ArcDir.CW, generate=True)
+    #toolpath = geometry.ToolPath(shape, step_size, geometry.ArcDir.Closest, generate=True)
+    toolpath = geometry.ToolPath(shape, step_size, geometry.ArcDir.CW, generate=True)
     timeslice = 0  # ms
     for index, progress in enumerate(toolpath.get_arcs(timeslice)):
         print(index, progress)

@@ -10,8 +10,9 @@ from enum import Enum
 import math
 import time
 
-from shapely.geometry import LineString, MultiLineString, Point, Polygon  # type: ignore
-from shapely.ops import linemerge  # type: ignore
+from shapely.geometry import LineString, MultiLineString, MultiPoint, Point, Polygon  # type: ignore
+from shapely.ops import linemerge, split  # type: ignore
+from shapely.geometry import CAP_STYLE, JOIN_STYLE  # type: ignore 
 
 try:
     from voronoi_centers import VoronoiCenters  # type: ignore
@@ -74,13 +75,24 @@ LineData = NamedTuple("Line", [
 ])
 
 
-def join_arcs(start: ArcData, end: ArcData, safe_area: Polygon) -> LineData:
+def join_arcs(start: ArcData, end: ArcData, safe_area: Polygon, to_cut: Polygon, step: float) -> List[LineData]:
     """
     Generate CAM tool path to join the end of one arc to the beginning of the next.
     """
+    lines = []
     path = LineString([start.end, end.start])
-    safe = path.covered_by(safe_area)
-    return LineData(start.end, end.start, path, safe)
+    not_cut = path.buffer(step / 2).difference(safe_area).buffer(-step / 20).buffer(step / 2)
+
+    if not_cut:
+        parts = split(path, not_cut)
+        for part in parts.geoms:
+            assert part.type == "LineString"
+            safe = not part.intersects(not_cut.buffer(-0.01))
+            lines.append(LineData(part.coords[-1], part.coords[-1], part, safe))
+    else:
+        lines.append(LineData(start.end, end.start, path, True))
+
+    return lines
 
 
 def create_circle(origin: Point, radius: float) -> ArcData:
@@ -244,6 +256,7 @@ class ToolPath:
         self.last_circle: Optional[ArcData] = create_circle(
             self.start_point, self.start_radius)
         self.cut_area_total = Polygon(self.last_circle.path)
+        self.cut_area_total2 = Polygon(self.last_circle.path).buffer(self.step / 2)
         self.last_arc: Optional[ArcData] = None
 
         self.arc_fail_count: int = 0
@@ -701,8 +714,10 @@ class ToolPath:
             arc = complete_arc(arc, winding_dir)
 
             if self.last_arc is not None:
-                self.path.append(join_arcs(self.last_arc, arc, self.cut_area_total))
-                self.path.append(arc)
+                self.path += join_arcs(
+                        self.last_arc, arc, self.cut_area_total2, self.polygon, self.step)
+            self.path.append(arc)
+            self.cut_area_total2 = self.cut_area_total2.union(arc.path.buffer(self.step / 2))
 
             self.last_arc = arc
 
