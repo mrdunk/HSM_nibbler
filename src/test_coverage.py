@@ -35,6 +35,7 @@ Result = NamedTuple("Result", [
     ("winding", geometry.ArcDir),
     ("cut_ratio", float),
     ("crash_ratio", float),
+    ("dangerous_crash_count", int),
 ])
 
 
@@ -87,6 +88,7 @@ def init_argparse() -> argparse.ArgumentParser:
 
 def draw(
         combined_path: List[LineString],
+        combined_rapids: List[LineString],
         pocket: Polygon,
         cut_area: Polygon,
         crash_area: Polygon,
@@ -97,7 +99,7 @@ def draw(
         output_display: bool
 ) -> None:
     """Display cut path."""
-    fig, ax = plt.subplots(1, 1, dpi=800)
+    fig, ax = plt.subplots(1, 1, dpi=1600)
 
     def polygon(poly: Polygon, colour: str, fill: bool = True) -> None:
         """Draw a Shaplely Polygon on matplotlib.pyplot. """
@@ -128,11 +130,13 @@ def draw(
                             ax.plot(*interior.xy, c=colour)
 
     polygon(cut_area, "green")
-    polygon(crash_area, "red")
     polygon(pocket, "blue", fill=False)
+    polygon(crash_area, "red")
 
     for path in combined_path:
         ax.plot(*path.xy, c="black", linewidth=0.01)
+    for path in combined_rapids:
+        ax.plot(*path.xy, c="yellow", linewidth=0.01)
 
     ax.axis('equal')
     if output_display:
@@ -182,6 +186,7 @@ def test_file(
     crash_area = Polygon()
 
     combined_path = []
+    combined_rapids = []
 
     last_path = None
     for element in toolpath.path:
@@ -190,7 +195,15 @@ def test_file(
         last_path = element.path
 
         if type(element).__name__ == "Arc":
-            cut_area = cut_area.union(Polygon(element.path).buffer(overlap / 2))
+            bounds = element.path.bounds
+            size = max(abs(bounds[0] - bounds[2]),
+                    abs(bounds[1] - bounds[3]))
+
+            new_cut = element.path.buffer(overlap / 2)
+            if size < overlap:
+                new_cut = Polygon(new_cut.exterior)
+            cut_area = cut_area.union(new_cut)
+
             if show_arcs:
                 combined_path.append(element.path)
         elif type(element).__name__ == "Line":
@@ -199,15 +212,23 @@ def test_file(
                 crash_area = crash_area.union(crash)
                 if show_arcs:
                     combined_path.append(element.path)
+            elif show_arcs:
+                combined_rapids.append(element.path)
 
     uncut_area = toolpath.polygon.difference(cut_area)
 
     cut_ratio = round(1.0 - uncut_area.area / toolpath.polygon.area, 4)
     crash_ratio = round(crash_area.area / toolpath.polygon.area, 4)
 
+    eroded_crash_area = crash_area.buffer(-overlap / 20)
+    if eroded_crash_area.type == "Polygon":
+        eroded_crash_area = MultiPolygon([eroded_crash_area])
+    dangerous_crash_count = len(eroded_crash_area.geoms)
+
     if output_path or output_display:
         draw(
             combined_path,
+            combined_rapids,
             toolpath.polygon,
             cut_area,
             crash_area,
@@ -222,7 +243,8 @@ def test_file(
         overlap,
         winding,
         cut_ratio,
-        crash_ratio
+        crash_ratio,
+        dangerous_crash_count
     )
 
 

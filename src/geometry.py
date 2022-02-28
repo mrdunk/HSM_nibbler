@@ -21,6 +21,8 @@ except ImportError:
     from cam.voronoi_centers import VoronoiCenters  # type: ignore
     from cam.helpers import log  # type: ignore
 
+# Filter arcs that are entirely within this distance of a pocket edge.
+JITTER_FILTER = 0.02
 
 # Number of tries before we give up trying to find a best-fit arc and just go
 # with the best we have found so far.
@@ -36,19 +38,23 @@ BREADTH_FIRST = False
 # When arc sizes drop below a certain point, we need to reduce the step size or
 # forward motion due to the distance between arcs (step) becomes more than the
 # arc diameter.
-# This constant is the minimum arc radius size at which we start reducing step size.
-# Expressed as a multiple of the step size.
-#CORNER_ZOOM = 4
-#CORNER_ZOOM = 8
-CORNER_ZOOM = 0  # Disabled.
-CORNER_ZOOM_EFFECT = 0.75
-#CORNER_ZOOM_EFFECT = 3
+# This constant is the minimum arc radius, expressed as a multiple of the overlap
+# size, size at which we start reducing step size.
+CORNER_ZOOM = 2.0
+# This constant is how much effect the feature will have. A value of "1" will
+# keep the distance between each arc center proportional to the arc size.
+CORNER_ZOOM_EFFECT = 1.0
 
 
 class ArcDir(Enum):
     CW = 0
     CCW = 1
     Closest = 2
+
+class MoveStyle(Enum):
+    RAPID_OUTSIDE = 0
+    RAPID_INSIDE = 1
+    CUT = 2
 
 
 ArcData = NamedTuple("Arc", [
@@ -71,28 +77,10 @@ LineData = NamedTuple("Line", [
     ("start", Optional[Point]),
     ("end", Optional[Point]),
     ("path", LineString),
-    ("safe", bool)
+    ("safe", bool),  # TODO: Remove me. Deprecated.
+    ("move_style", MoveStyle),
 ])
 
-
-def join_arcs(start: ArcData, end: ArcData, safe_area: Polygon, to_cut: Polygon, step: float) -> List[LineData]:
-    """
-    Generate CAM tool path to join the end of one arc to the beginning of the next.
-    """
-    lines = []
-    path = LineString([start.end, end.start])
-    not_cut = path.buffer(step / 2).difference(safe_area).buffer(-step / 20).buffer(step / 2)
-
-    if not_cut:
-        parts = split(path, not_cut)
-        for part in parts.geoms:
-            assert part.type == "LineString"
-            safe = not part.intersects(not_cut.buffer(-0.01))
-            lines.append(LineData(part.coords[-1], part.coords[-1], part, safe))
-    else:
-        lines.append(LineData(start.end, end.start, path, True))
-
-    return lines
 
 
 def create_circle(origin: Point, radius: float) -> ArcData:
@@ -250,7 +238,7 @@ class ToolPath:
         # Used to detect when an arc is too close to the edge to be worthwhile.
         self.dilated_polygon_boundaries = []
         for ring in [self.polygon.exterior] + list(self.polygon.interiors):
-            self.dilated_polygon_boundaries.append(ring.buffer(self.step / 4))
+            self.dilated_polygon_boundaries.append(ring.buffer(JITTER_FILTER))
 
         # Assume starting circle is already cut.
         self.last_circle: Optional[ArcData] = create_circle(
@@ -505,11 +493,6 @@ class ToolPath:
 
         distance = start_distance + desired_step
 
-        # Strange shapely bug causes ...interpolate(distance) to give wrong
-        # results if distance == 0.
-        # if distance == 0:
-        #    distance = 0.001
-
         count: int = 0
         circle: Optional[ArcData] = None
         arcs: List[ArcData] = []
@@ -518,6 +501,7 @@ class ToolPath:
         best_distance: float = 0.0
         dist_offset: int = 100000
         log_arc = ""
+        corner_zoom = CORNER_ZOOM * self.step
 
         # Extrapolate line beyond it's actual distance to give the PID algorithm
         # room to overshoot while converging on an optimal position for the new arc.
@@ -557,14 +541,12 @@ class ToolPath:
                 progress = self._furthest_spacing_shapely(arcs, self.cut_area_total)
 
             desired_step = self.step
-            if radius < CORNER_ZOOM:
+            if radius < corner_zoom:
                 # Limit step size as the arc radius gets very small.
-                multiplier = (CORNER_ZOOM - radius) / CORNER_ZOOM
-                desired_step = self.step - CORNER_ZOOM_EFFECT * multiplier
+                multiplier = (corner_zoom - radius) / corner_zoom
+                desired_step = self.step - self.step * CORNER_ZOOM_EFFECT * multiplier
 
-            if (abs(desired_step - progress) < abs(desired_step - best_progress)
-                    #and distance > 0
-                    ):
+            if abs(desired_step - progress) < abs(desired_step - best_progress):
                 # Better fit.
                 best_progress = progress
                 best_distance = distance
@@ -709,17 +691,62 @@ class ToolPath:
                     # TODO: We could improve this: Rather that taking the opposite
                     # of the last arc, we could work out the closest end based on
                     # the last drawn arc.
-                    winding_dir = ArcDir.CW if self.last_arc.winding_dir == ArcDir.CCW else ArcDir.CCW
+                    if self.last_arc.winding_dir == ArcDir.CCW:
+                        winding_dir = ArcDir.CW
+                    else:
+                        winding_dir = ArcDir.CCW
 
             arc = complete_arc(arc, winding_dir)
 
             if self.last_arc is not None:
-                self.path += join_arcs(
-                        self.last_arc, arc, self.cut_area_total2, self.polygon, self.step)
+                self.path += self.join_arcs(arc)
             self.path.append(arc)
+            # This union takes up ~25% of processing time of the whole algorithm.
+            # TODO: Only truncated arcs really need the whole check in 'join_arcs(...)'.
+            # We could tag arcs that need the detailed check and use shapely's
+            # unary_union(...) here for the others.
             self.cut_area_total2 = self.cut_area_total2.union(arc.path.buffer(self.step / 2))
 
             self.last_arc = arc
+
+    def join_arcs(self, end: ArcData) -> List[LineData]:
+        """
+        Generate CAM tool path to join the end of one arc to the beginning of the next.
+        """
+        lines = []
+        path = LineString([self.last_arc.end, end.start])
+        inside_pocket = path.covered_by(self.polygon)
+
+        not_cut = None
+        if inside_pocket:
+            not_cut = (path.buffer(self.step / 2).
+                    difference(self.cut_area_total2).buffer(-self.step / 20).
+                    buffer(self.step / 2))
+
+        if not_cut:
+            parts = split(path, not_cut)
+            for part in parts.geoms:
+                assert part.type == "LineString"
+                
+                move_style = MoveStyle.RAPID_OUTSIDE
+                if inside_pocket:
+                    move_style = MoveStyle.RAPID_INSIDE
+                    if part.intersects(not_cut.buffer(-0.01)):
+                        move_style = MoveStyle.CUT
+
+                safe = move_style == MoveStyle.RAPID_INSIDE
+
+                lines.append(LineData(part.coords[-1], part.coords[-1], part, safe, move_style))
+        else:
+            move_style = MoveStyle.RAPID_OUTSIDE
+            if inside_pocket:
+                move_style = MoveStyle.RAPID_INSIDE
+            
+            safe = move_style == MoveStyle.RAPID_INSIDE
+
+            lines.append(LineData(self.last_arc.end, end.start, path, safe, move_style))
+
+        return lines
 
     def _get_arcs(self, timeslice: int = 0):
         # TODO: Deprecated. Remove.
@@ -758,7 +785,7 @@ class ToolPath:
             dist = 0.0
             best_dist = dist
             stuck_count = int(combined_edge.length * 10 / self.step + 10)
-            while dist < combined_edge.length and stuck_count > 0:
+            while abs(dist - combined_edge.length) > self.step / 20 and stuck_count > 0:
                 stuck_count -= 1
                 dist, new_arcs = self._calculate_arc(combined_edge, dist, best_dist)
 
@@ -816,26 +843,40 @@ class ToolPath:
 
         # Need to put each arc in the queue with nearest predecessor.
         modified_queues = set()
-        for arc in new_arcs:
-            closest_queue = None
-            closest_queue_index = None
-            closest_dist = self.step
-            for queue_index, queue in enumerate(self.pending_arc_queues):
-                dist = arc.path.distance(queue[-1].path)
-                if dist < closest_dist:
-                    closest_dist = dist
-                    closest_queue = queue
-                    closest_queue_index = queue_index
-            if closest_queue is None:
-                # Not close to any predecessor. Create new queue.
-                closest_queue = []
-                closest_queue_index = len(self.pending_arc_queues)
-                self.pending_arc_queues.append(closest_queue)
-            closest_queue.append(arc)
-            modified_queues.add(closest_queue_index)
-            assert closest_queue_index is not None
-            assert closest_queue is self.pending_arc_queues[closest_queue_index]
-            assert arc in closest_queue
+
+        if len(new_arcs) == 1 and len(self.pending_arc_queues) == 1:
+            # Optimization to save expensive repeated distance calculations.
+            # Only a single queue and a single arc so we don't need complicated
+            # queues.
+            # Just add the arc to the single queue.
+            # Since there are no other queues depending on our remaining one,
+            # it is safe to drain it,
+            closest_queue = self.pending_arc_queues[0]
+            closest_queue.append(new_arcs[0])
+            to_process = self.pending_arc_queues.pop(0)
+            self._arcs_to_path(to_process)
+            return
+        else:
+            for arc in new_arcs:
+                closest_queue = None
+                closest_queue_index = None
+                closest_dist = self.step
+                for queue_index, queue in enumerate(self.pending_arc_queues):
+                    dist = arc.path.distance(queue[-1].path)
+                    if dist < closest_dist:
+                        closest_dist = dist
+                        closest_queue = queue
+                        closest_queue_index = queue_index
+                if closest_queue is None:
+                    # Not close to any predecessor. Create new queue.
+                    closest_queue = []
+                    closest_queue_index = len(self.pending_arc_queues)
+                    self.pending_arc_queues.append(closest_queue)
+                closest_queue.append(arc)
+                modified_queues.add(closest_queue_index)
+                assert closest_queue_index is not None
+                assert closest_queue is self.pending_arc_queues[closest_queue_index]
+                assert arc in closest_queue
 
         # Queues need processed in the order they were created: FIFO.
         # It is only safe to process the oldest queue (index: 0) as any younger
@@ -855,7 +896,7 @@ class ToolPath:
             return None
         poly_arc = Polygon(arc.path)
         for ring in self.dilated_polygon_boundaries:
-            if ring.contains(Polygon(poly_arc)):
+            if ring.contains(poly_arc):
                 return None
         return arc
 
