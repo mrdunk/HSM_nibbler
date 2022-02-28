@@ -207,7 +207,7 @@ def test_file(
             if show_arcs:
                 combined_path.append(element.path)
         elif type(element).__name__ == "Line":
-            if element.safe:
+            if element.move_style == geometry.MoveStyle.RAPID_INSIDE:
                 crash = element.path.buffer(overlap / 2).difference(cut_area)
                 crash_area = crash_area.union(crash)
                 if show_arcs:

@@ -123,11 +123,14 @@ def main(argv):
 
         elif type(element).__name__ == "Line":
             x, y = element.path.xy
-            if element.safe:
+            if element.move_style == geometry.MoveStyle.RAPID_INSIDE:
                 plt.plot(x, y, linestyle='--', c="blue", linewidth=1)
                 pass
-            else:
+            elif element.move_style == geometry.MoveStyle.RAPID_OUTSIDE:
                 plt.plot(x, y, c="orange", linewidth=1)
+            else:
+                assert element.move_style == geometry.MoveStyle.CUT
+                plt.plot(x, y, linestyle='--', c="green", linewidth=1)
 
     #plt.plot(toolpath.start_point.x, toolpath.start_point.y, 'o', c="black")
 
