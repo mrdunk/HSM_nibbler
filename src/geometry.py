@@ -10,7 +10,7 @@ from enum import Enum
 import math
 import time
 
-from shapely.geometry import LineString, MultiLineString, MultiPoint, Point, Polygon  # type: ignore
+from shapely.geometry import box, LinearRing, LineString, MultiLineString, MultiPoint, Point, Polygon  # type: ignore
 from shapely.ops import linemerge, split  # type: ignore
 from shapely.geometry import CAP_STYLE, JOIN_STYLE  # type: ignore 
 
@@ -204,7 +204,7 @@ def _colapse_dupe_points(line: LineString) -> Optional[LineString]:
     return LineString(points)
 
 
-class ToolPath:
+class BasePocket:
     """
     A CAM library to generate a HSM "peeling" pocketing toolpath.
     """
@@ -220,33 +220,14 @@ class ToolPath:
         self.step: float = step
         self.winding_dir: ArcDir = winding_dir
         self.generate = generate
+        self.voronoi = voronoi
+        self.polygon: Polygon = polygon
 
-        if voronoi is None:
-            self.voronoi = VoronoiCenters(polygon)
-        else:
-            self.voronoi = voronoi
-        self.polygon: Polygon = self.voronoi.polygon
-
+        self._reset()
         self.calculate_path()
 
     def _reset(self) -> None:
         """ Cleanup and/or initialise everything. """
-        self.start_point: Point
-        self.start_radius: float
-        self.start_point, self.start_radius = self.voronoi.widest_gap()
-
-        # Used to detect when an arc is too close to the edge to be worthwhile.
-        self.dilated_polygon_boundaries = []
-        for ring in [self.polygon.exterior] + list(self.polygon.interiors):
-            self.dilated_polygon_boundaries.append(ring.buffer(JITTER_FILTER))
-
-        # Assume starting circle is already cut.
-        self.last_circle: Optional[ArcData] = create_circle(
-            self.start_point, self.start_radius)
-        self.cut_area_total = Polygon(self.last_circle.path)
-        self.cut_area_total2 = Polygon(self.last_circle.path).buffer(self.step / 2)
-        self.last_arc: Optional[ArcData] = None
-
         self.arc_fail_count: int = 0
         self.path_fail_count: int = 0
         self.loop_count: int = 0
@@ -264,6 +245,11 @@ class ToolPath:
         self.path_len_total: float = 0.0
         for edge in self.voronoi.edges.values():
             self.path_len_total += edge.length
+
+        # Used to detect when an arc is too close to the edge to be worthwhile.
+        self.dilated_polygon_boundaries = []
+        for ring in [self.polygon.exterior] + list(self.polygon.interiors):
+            self.dilated_polygon_boundaries.append(ring.buffer(JITTER_FILTER))
 
     def calculate_path(self) -> None:
         """ Reset path and restart from beginning. """
@@ -765,13 +751,6 @@ class ToolPath:
             timeslice: int: How long to generate arcs for before yielding (ms).
         """
         start_time = round(time.time() * 1000)  # ms
-        self._reset()
-
-        assert self.last_circle
-        self._queue_arcs([
-            create_arc_from_path(
-                self.start_point, self.last_circle.path)
-            ])
 
         start_vertex: Optional[Tuple[float, float]
                                ] = self.start_point.coords[0]
@@ -900,3 +879,79 @@ class ToolPath:
                 return None
         return arc
 
+
+class InsidePocket(BasePocket):
+    def __init__(
+            self,
+            polygon: Polygon,
+            step: float,
+            winding_dir: ArcDir,
+            generate: bool = False,
+            voronoi: Optional[VoronoiCenters] = None
+    ) -> None:
+
+        if voronoi is None:
+            voronoi = VoronoiCenters(polygon, preserve_widest=True)
+
+        polygon: Polygon = voronoi.polygon  # Remove duplicate points.
+
+        super().__init__(polygon, step, winding_dir, generate, voronoi)
+
+    def _reset(self) -> None:
+        super()._reset()
+
+        self.start_point: Point
+        self.start_radius: float
+        self.start_point, self.start_radius = self.voronoi.widest_gap()
+
+        # Assume starting circle is already cut.
+        self.last_arc: Optional[ArcData] = None
+        self.last_circle: Optional[ArcData] = create_circle(
+            self.start_point, self.start_radius)
+        self.cut_area_total = Polygon(self.last_circle.path)
+        self.cut_area_total2 = Polygon(self.last_circle.path).buffer(self.step / 2)
+
+        self._queue_arcs([
+            create_arc_from_path(
+                self.start_point, self.last_circle.path)
+            ])
+
+class OutsidePocket(BasePocket):
+    def __init__(
+            self,
+            polygon: Polygon,
+            material: Union[LinearRing, LineString, Polygon],
+            step: float,
+            winding_dir: ArcDir,
+            generate: bool = False,
+    ) -> None:
+
+        if material.type == "Polygon":
+            self.material = material.exterior
+        else:
+            self.material = LinearRing(material)
+
+        pocket_bound = polygon.bounds
+        material_bound = self.material.bounds
+        outer_bound = [(2 * b - a) for a, b in zip(pocket_bound, material_bound)]
+        self.outer_box = box(*outer_bound).exterior
+
+        padded_polygon = Polygon(self.outer_box, holes=[polygon.exterior])
+        voronoi = VoronoiCenters(padded_polygon, preserve_edge=True)
+
+        material_polygon = Polygon(self.material, holes=[polygon.exterior])
+        super().__init__(material_polygon, step, winding_dir, generate, voronoi)
+
+    def _reset(self) -> None:
+        super()._reset()
+
+        self.start_point = self.voronoi.vertex_on_perimiter() or self.voronoi.widest_gap()[0]
+
+        self.last_arc: Optional[ArcData] = None
+        self.last_circle: Optional[ArcData] = None
+        self.cut_area_total = Polygon(self.outer_box, holes=[self.material])
+        #self.cut_area_total = self.material.buffer(10)
+        self.cut_area_total2 = Polygon(self.cut_area_total)
+
+# TODO: Deprecated. Delete me.
+ToolPath = InsidePocket

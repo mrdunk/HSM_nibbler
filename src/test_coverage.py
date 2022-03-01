@@ -136,7 +136,7 @@ def draw(
     for path in combined_path:
         ax.plot(*path.xy, c="black", linewidth=0.01)
     for path in combined_rapids:
-        ax.plot(*path.xy, c="yellow", linewidth=0.01)
+        ax.plot(*path.xy, c="red", linewidth=0.03)
 
     ax.axis('equal')
     if output_display:

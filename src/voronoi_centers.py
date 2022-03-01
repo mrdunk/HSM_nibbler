@@ -41,7 +41,13 @@ def round_coord(value: Tuple[float, float], dp: int = ROUND_DP) -> Tuple[float, 
 
 
 class VoronoiCenters:
-    def __init__(self, polygon: Polygon, tolerence: float = 0.1) -> None:
+    def __init__(
+            self,
+            polygon: Polygon,
+            tolerence: float = 0.1,
+            preserve_widest: bool = False,
+            preserve_edge: bool = False
+            ) -> None:
         """
         Arguments:
             polygon: The geometer that we wish to generate a voronoi diagram inside.
@@ -153,14 +159,23 @@ class VoronoiCenters:
                             self._store_edge(line)
                         continue
 
-        # The widest_gap() method checks vertices for the widest point.
-        # If we remove this vertex subsequent calls will not work.
-        # If we cached the value instead, client code will not be able to use the
-        # returned vertex value as an index into this class's data structures.
-        widest_point, _ = self.widest_gap()
+        preserve = []
+        if preserve_widest:
+            # The widest_gap() method checks vertices for the widest point.
+            # If we remove this vertex subsequent calls will not work.
+            # If we cached the value instead, client code will not be able to use the
+            # returned vertex value as an index into this class's data structures.
+            p, _ = self.widest_gap()
+            preserve.append(p.coords[0])
+        if preserve_edge:
+            # The vertex_on_perimiter() method picks a vertex that touches the
+            # perimeter. We might not want to clean that up if we want to cut in from
+            # the edge.
+            p = self.vertex_on_perimiter()
+            preserve.append(p.coords[0])
 
-        self._drop_irrelevant_edges()
-        self._combine_edges([widest_point.coords[0]])
+        self._drop_irrelevant_edges(preserve)
+        self._combine_edges(preserve)
 
         # self._check_data()
 
@@ -368,7 +383,7 @@ class VoronoiCenters:
 
         return to_return
 
-    def _drop_irrelevant_edges(self) -> None:
+    def _drop_irrelevant_edges(self, preserve: List[Tuple[float, float]]) -> None:
         """
         If any geometry resulting from a voronoi edge will be covered by the
         geometry of some other voronoi edge it is deemed irrelevant and pruned
@@ -377,8 +392,10 @@ class VoronoiCenters:
         to_prune: Set[int] = set()
         for edge_i in self.edges:
             vert_a, vert_b = self.edge_to_vertex[edge_i]
-            to_prune |= self._follow_cleanup_candidates(vert_a)
-            to_prune |= self._follow_cleanup_candidates(vert_b)
+            if vert_a not in preserve:
+                to_prune |= self._follow_cleanup_candidates(vert_a)
+            if vert_b not in preserve:
+                to_prune |= self._follow_cleanup_candidates(vert_b)
 
         for edge_i in to_prune:
             self._remove_edge(edge_i)
@@ -406,3 +423,16 @@ class VoronoiCenters:
                 widest_dist = nearest_dist
                 widest_point = Point(vertex)
         return (widest_point, widest_dist)
+
+    def vertex_on_perimiter(self) -> Point:
+        closest = None
+        distance = self.max_dist
+        for vertex in self.vertex_to_edges:
+            if self.polygon.exterior.contains(Point(vertex)):
+                return Point(vertex)
+            dist = self.polygon.exterior.distance(Point(vertex))
+            if dist < distance:
+                distance = dist
+                closest = Point(vertex)
+        return closest
+
