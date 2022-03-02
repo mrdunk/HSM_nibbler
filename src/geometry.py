@@ -209,6 +209,12 @@ class BasePocket:
     A CAM library to generate a HSM "peeling" pocketing toolpath.
     """
 
+    cut_area_total: Polygon
+    cut_area_total2: Polygon
+    last_arc: Optional[ArcData]
+    last_circle: Optional[ArcData]
+    start_point: Point
+
     def __init__(
             self,
             polygon: Polygon,
@@ -217,6 +223,8 @@ class BasePocket:
             generate: bool = False,
             voronoi: Optional[VoronoiCenters] = None
     ) -> None:
+        assert voronoi
+
         self.step: float = step
         self.winding_dir: ArcDir = winding_dir
         self.generate = generate
@@ -497,6 +505,7 @@ class BasePocket:
                    (voronoi_edge.length + 2 * dist_offset)) < 0.0001
 
         assert self.cut_area_total
+        assert self.cut_area_total.is_valid
 
         # Loop multiple times, trying to converge on a distance along the voronoi
         # edge that provides the correct step size.
@@ -699,6 +708,7 @@ class BasePocket:
         """
         Generate CAM tool path to join the end of one arc to the beginning of the next.
         """
+        assert self.last_arc
         lines = []
         path = LineString([self.last_arc.end, end.start])
         inside_pocket = path.covered_by(self.polygon)
@@ -722,7 +732,8 @@ class BasePocket:
 
                 safe = move_style == MoveStyle.RAPID_INSIDE
 
-                lines.append(LineData(part.coords[-1], part.coords[-1], part, safe, move_style))
+                lines.append(LineData(
+                    Point(part.coords[-1]), Point(part.coords[-1]), part, safe, move_style))
         else:
             move_style = MoveStyle.RAPID_OUTSIDE
             if inside_pocket:
@@ -822,6 +833,7 @@ class BasePocket:
 
         # Need to put each arc in the queue with nearest predecessor.
         modified_queues = set()
+        closest_queue: Optional[List[ArcData]]
 
         if len(new_arcs) == 1 and len(self.pending_arc_queues) == 1:
             # Optimization to save expensive repeated distance calculations.
@@ -893,9 +905,9 @@ class InsidePocket(BasePocket):
         if voronoi is None:
             voronoi = VoronoiCenters(polygon, preserve_widest=True)
 
-        polygon: Polygon = voronoi.polygon  # Remove duplicate points.
+        clean_polygon: Polygon = voronoi.polygon  # Remove duplicate points.
 
-        super().__init__(polygon, step, winding_dir, generate, voronoi)
+        super().__init__(clean_polygon, step, winding_dir, generate, voronoi)
 
     def _reset(self) -> None:
         super()._reset()
@@ -933,14 +945,16 @@ class OutsidePocket(BasePocket):
 
         pocket_bound = polygon.bounds
         material_bound = self.material.bounds
-        outer_bound = [(2 * b - a) for a, b in zip(pocket_bound, material_bound)]
+        outer_bound = [(b + max(b, b - a)) for a, b in zip(pocket_bound, material_bound)]
         self.outer_box = box(*outer_bound).exterior
 
-        padded_polygon = Polygon(self.outer_box, holes=[polygon.exterior])
+        padded_polygon = Polygon(self.outer_box)
+        padded_polygon = padded_polygon.difference(Polygon(polygon.exterior))
         voronoi = VoronoiCenters(padded_polygon, preserve_edge=True)
 
-        material_polygon = Polygon(self.material, holes=[polygon.exterior])
-        super().__init__(material_polygon, step, winding_dir, generate, voronoi)
+        material_minus_polygon = Polygon(self.material)
+        material_minus_polygon = material_minus_polygon.difference(Polygon(polygon.exterior))
+        super().__init__(material_minus_polygon, step, winding_dir, generate, voronoi)
 
     def _reset(self) -> None:
         super()._reset()
@@ -949,7 +963,9 @@ class OutsidePocket(BasePocket):
 
         self.last_arc: Optional[ArcData] = None
         self.last_circle: Optional[ArcData] = None
-        self.cut_area_total = Polygon(self.outer_box, holes=[self.material])
+        self.cut_area_total = Polygon(self.outer_box)
+        self.cut_area_total = self.cut_area_total.difference(Polygon(self.material))
+        #self.cut_area_total = Polygon(self.outer_box, holes=[self.material])
         #self.cut_area_total = self.material.buffer(10)
         self.cut_area_total2 = Polygon(self.cut_area_total)
 

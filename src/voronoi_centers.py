@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Set, Tuple
 import math
 
 from shapely.geometry.base import BaseGeometry  # type: ignore
-from shapely.geometry import LineString, Point, Polygon  # type: ignore
+from shapely.geometry import box, LineString, Point, Polygon  # type: ignore
 from shapely.ops import linemerge, nearest_points  # type: ignore
 from shapely.validation import make_valid  # type: ignore
 
@@ -175,6 +175,7 @@ class VoronoiCenters:
             preserve.append(p.coords[0])
 
         self._drop_irrelevant_edges(preserve)
+        self._split_on_pocket_edge()
         self._combine_edges(preserve)
 
         # self._check_data()
@@ -320,6 +321,45 @@ class VoronoiCenters:
             edge_combined = linemerge([edge_a, edge_b])
             self._store_edge(edge_combined, edge_i_a)
 
+    def _split_on_pocket_edge(self) -> None:
+        """
+        When an polygon island touches the exterior at a single point the vorinoi
+        diagram will have a vertex at that point. This leads code like _combine_edges
+        to presume the edge passes through this vertex.
+        It is unlikely this is the desired behavior so this method "shrinks" the
+        voronoi edges slightly, creating 2 very close vertexes which stop the
+        voronoi edges from touching.
+        """
+        split_at = []
+        for vertex, edges_i in self.vertex_to_edges.items():
+            point = Point(vertex)
+            if len(edges_i) == 2 and self.distance_from_geom(point) <= EPS:
+                split_at.append(vertex)
+
+        while split_at:
+            vertex = split_at.pop()
+            edges_i = self.vertex_to_edges[vertex]
+
+            assert len(edges_i) == 2
+
+            edge_i_0 = edges_i[0]
+            edge_0 = self.edges[edge_i_0]
+            if edge_0.coords[0] == vertex:
+                edge_0 = LineString(edge_0.coords[::-1])
+            vertex_updated_0 = edge_0.interpolate(edge_0.length - EPS)
+
+            edge_i_1 = edges_i[1]
+            edge_1 = self.edges[edge_i_1]
+            if edge_1.coords[0] == vertex:
+                edge_1 = LineString(edge_1.coords[::-1])
+            vertex_updated_1 = edge_1.interpolate(edge_1.length - EPS)
+
+            self._remove_edge(edge_i_0)
+            self._remove_edge(edge_i_1)
+
+            self._store_edge(LineString([edge_0.coords[0], vertex_updated_0]), edge_i_0)
+            self._store_edge(LineString([edge_1.coords[0], vertex_updated_1]), edge_i_1)
+
     def _follow_cleanup_candidates(self, vertex: Vertex) -> Set[int]:
         """
         Voronoi edges that touch self.polygon are sometimes not needed and are
@@ -425,12 +465,16 @@ class VoronoiCenters:
         return (widest_point, widest_dist)
 
     def vertex_on_perimiter(self) -> Point:
+        """
+        Find a point as close to the perimeter as possible.
+        """
+        bounding_box = box(*self.polygon.bounds).exterior
         closest = None
         distance = self.max_dist
         for vertex in self.vertex_to_edges:
-            if self.polygon.exterior.contains(Point(vertex)):
+            if bounding_box.intersects(Point(vertex)):
                 return Point(vertex)
-            dist = self.polygon.exterior.distance(Point(vertex))
+            dist = bounding_box.distance(Point(vertex))
             if dist < distance:
                 distance = dist
                 closest = Point(vertex)
