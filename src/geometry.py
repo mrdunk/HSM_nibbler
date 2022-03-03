@@ -10,7 +10,7 @@ from enum import Enum
 import math
 import time
 
-from shapely.geometry import box, LinearRing, LineString, MultiLineString, MultiPoint, Point, Polygon  # type: ignore
+from shapely.geometry import box, LinearRing, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon  # type: ignore
 from shapely.ops import linemerge, split  # type: ignore
 from shapely.geometry import CAP_STYLE, JOIN_STYLE  # type: ignore 
 
@@ -256,8 +256,12 @@ class BasePocket:
 
         # Used to detect when an arc is too close to the edge to be worthwhile.
         self.dilated_polygon_boundaries = []
-        for ring in [self.polygon.exterior] + list(self.polygon.interiors):
-            self.dilated_polygon_boundaries.append(ring.buffer(JITTER_FILTER))
+        multi = self.polygon
+        if multi.type != "MultiPolygon":
+            multi = MultiPolygon([multi])
+        for poly in multi.geoms:
+            for ring in [poly.exterior] + list(poly.interiors):
+                self.dilated_polygon_boundaries.append(ring.buffer(JITTER_FILTER))
 
     def calculate_path(self) -> None:
         """ Reset path and restart from beginning. """
@@ -943,17 +947,27 @@ class OutsidePocket(BasePocket):
         else:
             self.material = LinearRing(material)
 
+        # The space the voronoi diagram needs.
+        # Ideally edges twice as far from the part as the material edge is from the part.
+        # This causes arcs to be truncated at their widest point.
         pocket_bound = polygon.bounds
         material_bound = self.material.bounds
-        outer_bound = [(b + max(b, b - a)) for a, b in zip(pocket_bound, material_bound)]
-        self.outer_box = box(*outer_bound).exterior
+        outer_bound = []
+        for index, (p, m) in enumerate(zip(pocket_bound, material_bound)):
+            padding = m - p
+            if index < 2:
+                padding = min(-4 * step, padding)
+            else:
+                padding = max(4 * step, padding)
+            outer_bound.append(m + padding)
 
-        padded_polygon = Polygon(self.outer_box)
-        padded_polygon = padded_polygon.difference(Polygon(polygon.exterior))
+        self.outer_box = box(*outer_bound)
+        padded_polygon = self.outer_box.difference(Polygon(polygon.exterior))
         voronoi = VoronoiCenters(padded_polygon, preserve_edge=True)
 
-        material_minus_polygon = Polygon(self.material)
-        material_minus_polygon = material_minus_polygon.difference(Polygon(polygon.exterior))
+        # The shape to be cut.
+        material_minus_polygon = Polygon(self.material).difference(Polygon(polygon.exterior))
+
         super().__init__(material_minus_polygon, step, winding_dir, generate, voronoi)
 
     def _reset(self) -> None:
@@ -965,8 +979,6 @@ class OutsidePocket(BasePocket):
         self.last_circle: Optional[ArcData] = None
         self.cut_area_total = Polygon(self.outer_box)
         self.cut_area_total = self.cut_area_total.difference(Polygon(self.material))
-        #self.cut_area_total = Polygon(self.outer_box, holes=[self.material])
-        #self.cut_area_total = self.material.buffer(10)
         self.cut_area_total2 = Polygon(self.cut_area_total)
 
 # TODO: Deprecated. Delete me.
