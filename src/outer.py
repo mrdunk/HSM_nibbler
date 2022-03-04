@@ -8,7 +8,7 @@ import sys
 
 import ezdxf
 import matplotlib.pyplot as plt    # type: ignore
-from shapely.geometry import box, LinearRing, LineString, Point, Polygon  # type: ignore
+from shapely.geometry import box, LinearRing, LineString, MultiPolygon, Point, Polygon  # type: ignore
 
 import dxf
 import geometry
@@ -42,32 +42,39 @@ def main(argv):
 
     modelspace = dxf_data.modelspace()
 
-    shape = dxf.dxf_to_polygon(modelspace)
+    shapes = dxf.dxf_to_polygon(modelspace)
 
-    #material = LineString([(-100, -100), (-100, 160), (150, 160), (150, -100)])
+    #material = LineString([(-100, -100), (-100, 150), (200, 150), (200, -100)])
+    #material = LineString([(10, 10), (10, 200), (200, 200), (200, 10)])
+    material_bounds = shapes.buffer(4 * step_size).bounds
+    material = box(*material_bounds)
 
     #material_bounds = shape.buffer(4 * step_size).bounds
-    #material = box(*material_bounds)
-
-    material_bounds = shape.buffer(4 * step_size).bounds
-    longest = max(abs(material_bounds[0] - material_bounds[2]),
-            abs(material_bounds[1] - material_bounds[3]))
-    material = shape.centroid.buffer(2 * longest / 3).exterior
+    #longest = max(abs(material_bounds[0] - material_bounds[2]),
+    #        abs(material_bounds[1] - material_bounds[3]))
+    #material = shape.centroid.buffer(2 * longest / 3).exterior
 
     # Generate tool path.
-    #toolpath = geometry.ToolPath(shape, step_size, geometry.ArcDir.Closest, generate=True)
-    #toolpath = geometry.ToolPath(shape, step_size, geometry.ArcDir.CW, generate=True)
-    toolpath = geometry.OutsidePocket(shape, material, step_size, geometry.ArcDir.CW, generate=True)
-    #toolpath = geometry.OutsidePocket(shape, material, step_size, geometry.ArcDir.CW, generate=False)
+    #toolpath = geometry.OutsidePocket(shapes, material, step_size, geometry.ArcDir.CW, generate=True)
+    toolpath = geometry.OutsidePocketSimple(shapes[0], step_size, geometry.ArcDir.CW, generate=True)
 
 
     # Display shape to be cut
-    x, y = toolpath.polygon.exterior.xy
-    plt.plot(x, y, c="blue", linewidth=2)
+    for shape in shapes.geoms:
+        x, y = toolpath.voronoi.polygon.exterior.xy
+        plt.plot(x, y, linestyle='--', c="blue", linewidth=2)
 
-    for interior in toolpath.polygon.interiors:
-        x, y = interior.xy
-        plt.plot(x, y, c="orange", linewidth=2)
+        multi = toolpath.polygon
+        if multi.type != "MultiPolygon":
+            multi = MultiPolygon([multi])
+        for poly in multi.geoms:
+            x, y = poly.exterior.xy
+            plt.plot(x, y, c="blue", linewidth=2)
+
+            for interior in poly.interiors:
+                x, y = interior.xy
+                plt.plot(x, y, c="orange", linewidth=2)
+
 
     # Draw arcs via generator.
     timeslice = 100  # ms

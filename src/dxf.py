@@ -9,7 +9,7 @@ from math import *
 
 from ezdxf.entities.lwpolyline import LWPolyline as DxfPolyline
 from ezdxf.query import EntityQuery as DxfPolylines
-from shapely.geometry import LineString, MultiLineString, Point, Polygon, LinearRing, MultiPoint  # type: ignore
+from shapely.geometry import LineString, MultiLineString, Point, Polygon, LinearRing, MultiPoint, MultiPolygon  # type: ignore
 
 CIRCLE_RES = 500
 
@@ -72,7 +72,7 @@ def polyline_to_linestring(entity) -> LineString:
         lastx, lasty = x, y
     return LineString(points)
 
-def dxf_to_polygon(modelspace) -> Polygon:
+def dxf_to_polygon(modelspace) -> MultiPolygon:
     """ Convert .dxf polyline into shapely Polygon. """
     rings = []
     for entity in modelspace:
@@ -83,18 +83,28 @@ def dxf_to_polygon(modelspace) -> Polygon:
         else:
             print(f"Unsupported dxf entity: {entity.dxftype()}")
 
-    parent = None
+    parents = []
     for ring in rings:
-        if parent is None or Polygon(ring).covers(parent):
-            parent = ring
+        coveres = []
+        covered_by = False
+        for parent_index, parent in enumerate(parents):
+            if Polygon(ring).covers(parent):
+                coveres.append(parent_index)
+            if Polygon(parent).covers(ring):
+                covered_by = True
+        for not_parent in sorted(coveres, reverse=True):
+            parents.pop(not_parent)
+        if not covered_by:
+            parents.append(ring)
 
-    holes = []
-    for ring in rings:
-        if ring is not parent:
-            holes.append(ring)
+    polygons = []
+    for parent in parents:
+        holes = []
+        for ring in rings:
+            if ring is parent:
+                continue
+            if Polygon(parent).covers(ring):
+                holes.append(ring)
+        polygons.append(Polygon(parent, holes=holes))
 
-    if holes:
-        return Polygon(parent, holes=holes)
-    return Polygon(parent)
-
-
+    return MultiPolygon(polygons)

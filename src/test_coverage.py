@@ -176,7 +176,7 @@ def test_file(
 
     dxf_data = ezdxf.readfile(filepath)
     modelspace = dxf_data.modelspace()
-    shape = dxf.dxf_to_polygon(modelspace)
+    shape = dxf.dxf_to_polygon(modelspace)[-1]
 
     time_run = time.time()
     toolpath = geometry.ToolPath(shape, overlap, winding, generate=False)

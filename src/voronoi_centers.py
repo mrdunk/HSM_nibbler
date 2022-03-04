@@ -166,7 +166,8 @@ class VoronoiCenters:
             # If we cached the value instead, client code will not be able to use the
             # returned vertex value as an index into this class's data structures.
             p, _ = self.widest_gap()
-            preserve.append(p.coords[0])
+            if p is not None:
+                preserve.append(p.coords[0])
         if preserve_edge:
             # The vertex_on_perimiter() method picks a vertex that touches the
             # perimeter. We might not want to clean that up if we want to cut in from
@@ -178,7 +179,7 @@ class VoronoiCenters:
         self._split_on_pocket_edge()
         self._combine_edges(preserve)
 
-        # self._check_data()
+        self._check_data()
 
     def _check_data(self) -> None:
         """ Sanity check data structures. """
@@ -213,7 +214,14 @@ class VoronoiCenters:
         """
         fixed = make_valid(self.polygon)
         while fixed.type == "MultiPolygon":
-            fixed = fixed.geoms[0]
+            bigest = None
+            size = 0
+            for geom in fixed.geoms:
+                poly_area = Polygon(geom).area
+                if poly_area > size:
+                    size = poly_area
+                    bigest = geom
+            fixed = bigest
             fixed = make_valid(fixed)
             # TODO: Should we just throw an exception here?
             # There is more than one choice for the outer geometry loop.

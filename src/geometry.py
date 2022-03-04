@@ -82,6 +82,37 @@ LineData = NamedTuple("Line", [
 ])
 
 
+def clean_linearring(ring: LinearRing) -> LinearRing:
+    """ Remove duplicate points in a LinearRing. """
+    new_ring = []
+    prev_point = None
+    first_point = None
+    for point in ring.coords:
+        if first_point is None:
+            first_point = point
+        if point == prev_point:
+            continue
+        else:
+            new_ring.append(point)
+            prev_point = point
+    assert prev_point == first_point  # This is a loop.
+
+    return LinearRing(new_ring)
+
+def clean_polygon(polygon: Polygon) -> Polygon:
+    exterior = clean_linearring(polygon.exterior)
+    holes = []
+    for hole in polygon.interiors:
+        holes.append(clean_linearring(hole))
+
+    return Polygon(exterior, holes=holes)
+
+def clean_multipolygon(multi: MultiPolygon) -> MultiPolygon:
+    polygons = []
+    for polygon in multi.geoms:
+        polygons.append(clean_polygon(polygon))
+
+    return MultiPolygon(polygons)
 
 def create_circle(origin: Point, radius: float) -> ArcData:
     """
@@ -477,7 +508,8 @@ class BasePocket:
         # A full PID algorithm is provided for estimating the center of the arc
         # but so far all test cases have been solved with only the Proportional
         # parameter enabled.
-        pid = self._pid(0.75, 0, 0, 0)
+        #pid = self._pid(0.75, 0, 0, 0)
+        pid = self._pid(0.76, 0, 0, 0)
         #pid = self._pid(0.19, 0.04, 0.12, 0)
         #pid = self._pid(0.9, 0.01, 0.01, 0)
         #pid = self._pid(0, 0.001, 0.3, 0)
@@ -919,7 +951,7 @@ class InsidePocket(BasePocket):
         self.start_point: Point
         self.start_radius: float
         self.start_point, self.start_radius = self.voronoi.widest_gap()
-
+       
         # Assume starting circle is already cut.
         self.last_arc: Optional[ArcData] = None
         self.last_circle: Optional[ArcData] = create_circle(
@@ -935,12 +967,14 @@ class InsidePocket(BasePocket):
 class OutsidePocket(BasePocket):
     def __init__(
             self,
-            polygon: Polygon,
+            polygons: MultiPolygon,
             material: Union[LinearRing, LineString, Polygon],
             step: float,
             winding_dir: ArcDir,
             generate: bool = False,
     ) -> None:
+
+        polygons = clean_multipolygon(polygons)
 
         if material.type == "Polygon":
             self.material = material.exterior
@@ -950,7 +984,7 @@ class OutsidePocket(BasePocket):
         # The space the voronoi diagram needs.
         # Ideally edges twice as far from the part as the material edge is from the part.
         # This causes arcs to be truncated at their widest point.
-        pocket_bound = polygon.bounds
+        pocket_bound = polygons.bounds
         material_bound = self.material.bounds
         outer_bound = []
         for index, (p, m) in enumerate(zip(pocket_bound, material_bound)):
@@ -962,11 +996,15 @@ class OutsidePocket(BasePocket):
             outer_bound.append(m + padding)
 
         self.outer_box = box(*outer_bound)
-        padded_polygon = self.outer_box.difference(Polygon(polygon.exterior))
+        padded_polygon = Polygon(self.outer_box)
+        for polygon in polygons.geoms:
+            padded_polygon = padded_polygon.difference(Polygon(polygon.exterior))
         voronoi = VoronoiCenters(padded_polygon, preserve_edge=True)
 
         # The shape to be cut.
-        material_minus_polygon = Polygon(self.material).difference(Polygon(polygon.exterior))
+        material_minus_polygon = Polygon(self.material)
+        for polygon in polygons.geoms:
+            material_minus_polygon = material_minus_polygon.difference(Polygon(polygon.exterior))
 
         super().__init__(material_minus_polygon, step, winding_dir, generate, voronoi)
 
@@ -980,6 +1018,23 @@ class OutsidePocket(BasePocket):
         self.cut_area_total = Polygon(self.outer_box)
         self.cut_area_total = self.cut_area_total.difference(Polygon(self.material))
         self.cut_area_total2 = Polygon(self.cut_area_total)
+
+
+class OutsidePocketSimple(OutsidePocket):
+    def __init__(
+            self,
+            polygon: Polygon,
+            step: float,
+            winding_dir: ArcDir,
+            generate: bool = False,
+    ) -> None:
+        interiors = []
+        for interior in polygon.interiors:
+            interiors.append(Polygon(interior))
+        polygons = MultiPolygon(interiors)
+        material = polygon.exterior
+        super().__init__(polygons, material, step, winding_dir, generate)
+
 
 # TODO: Deprecated. Delete me.
 ToolPath = InsidePocket

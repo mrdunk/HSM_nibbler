@@ -71,7 +71,7 @@ def main(argv):
     #    print_entity(entity)
     #    print()
 
-    shape = dxf.dxf_to_polygon(modelspace)
+    shape = dxf.dxf_to_polygon(modelspace).geoms[0]
 
     # Display shape to be cut
     x, y = shape.exterior.xy
