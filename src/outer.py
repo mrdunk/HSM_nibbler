@@ -56,7 +56,9 @@ def main(argv):
 
     # Generate tool path.
     #toolpath = geometry.OutsidePocket(shapes, material, step_size, geometry.ArcDir.CW, generate=True)
-    toolpath = geometry.OutsidePocketSimple(shapes[0], step_size, geometry.ArcDir.CW, generate=True)
+    toolpath = geometry.OutsidePocket(shapes, material, step_size, geometry.ArcDir.Closest, generate=True)
+    #toolpath = geometry.OutsidePocketSimple(shapes[0], step_size, geometry.ArcDir.CW, generate=True)
+    #toolpath = geometry.OutsidePocketSimple(shapes[0], step_size, geometry.ArcDir.Closest, generate=True)
 
 
     # Display shape to be cut
@@ -69,11 +71,11 @@ def main(argv):
             multi = MultiPolygon([multi])
         for poly in multi.geoms:
             x, y = poly.exterior.xy
-            plt.plot(x, y, c="blue", linewidth=2)
+            #plt.plot(x, y, c="blue", linewidth=2)
 
             for interior in poly.interiors:
                 x, y = interior.xy
-                plt.plot(x, y, c="orange", linewidth=2)
+                #plt.plot(x, y, c="orange", linewidth=2)
 
 
     # Draw arcs via generator.
@@ -112,19 +114,20 @@ def main(argv):
                 plt.plot(x, y, c=element.debug, linewidth=3)
             else:
                 plt.plot(x, y, c="green", linewidth=1)
+                pass
             #plt.plot(element.origin.x, element.origin.y, "o")
 
         elif type(element).__name__ == "Line":
             x, y = element.path.xy
             if element.move_style == geometry.MoveStyle.RAPID_INSIDE:
-                #plt.plot(x, y, linestyle='--', c="blue", linewidth=1)
+                plt.plot(x, y, linestyle='--', c="blue", linewidth=1)
                 pass
             elif element.move_style == geometry.MoveStyle.RAPID_OUTSIDE:
-                #plt.plot(x, y, c="orange", linewidth=1)
+                plt.plot(x, y, c="orange", linewidth=1)
                 pass
             else:
                 assert element.move_style == geometry.MoveStyle.CUT
-                #plt.plot(x, y, linestyle='--', c="green", linewidth=1)
+                plt.plot(x, y, linestyle='--', c="green", linewidth=1)
 
     plt.plot(toolpath.start_point.x, toolpath.start_point.y, 'o', c="black")
 

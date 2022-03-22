@@ -740,44 +740,38 @@ class BasePocket:
 
             self.last_arc = arc
 
-    def join_arcs(self, end: ArcData) -> List[LineData]:
+    def join_arcs(self, next_arc: ArcData) -> List[LineData]:
         """
         Generate CAM tool path to join the end of one arc to the beginning of the next.
         """
         assert self.last_arc
         lines = []
-        path = LineString([self.last_arc.end, end.start])
-        inside_pocket = path.covered_by(self.polygon)
+        path = LineString([self.last_arc.end, next_arc.start])
+        inside_pocket = path.covered_by(self.polygon.buffer(self.step / 20))
 
-        not_cut = None
         if inside_pocket:
-            not_cut = (path.buffer(self.step / 2).
+            # Whole path is inside pocket.
+            not_cut_path_area = (path.buffer(self.step / 2).
                     difference(self.cut_area_total2).buffer(-self.step / 20).
                     buffer(self.step / 2))
+            not_cut_path = split(path, not_cut_path_area)
 
-        if not_cut:
-            parts = split(path, not_cut)
-            for part in parts.geoms:
+            for part in not_cut_path.geoms:
                 assert part.type == "LineString"
-                
-                move_style = MoveStyle.RAPID_OUTSIDE
-                if inside_pocket:
-                    move_style = MoveStyle.RAPID_INSIDE
-                    if part.intersects(not_cut.buffer(-0.01)):
-                        move_style = MoveStyle.CUT
+
+                move_style = MoveStyle.RAPID_INSIDE
+                if part.intersects(not_cut_path_area.buffer(-0.01)):
+                    move_style = MoveStyle.CUT
 
                 safe = move_style == MoveStyle.RAPID_INSIDE
 
                 lines.append(LineData(
                     Point(part.coords[-1]), Point(part.coords[-1]), part, safe, move_style))
         else:
+            # Path is not entirely inside pocket.
             move_style = MoveStyle.RAPID_OUTSIDE
-            if inside_pocket:
-                move_style = MoveStyle.RAPID_INSIDE
-            
-            safe = move_style == MoveStyle.RAPID_INSIDE
-
-            lines.append(LineData(self.last_arc.end, end.start, path, safe, move_style))
+            safe = False
+            lines.append(LineData(self.last_arc.end, next_arc.start, path, safe, move_style))
 
         return lines
 
