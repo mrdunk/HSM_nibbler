@@ -915,7 +915,7 @@ class BasePocket:
         if len(arc.path.coords) < 3:
             return None
 
-        if arc.path.length <= 5.96e-08:
+        if arc.path.length <= self.step / 20:
             # Arc too short to care about.
             return None
 
