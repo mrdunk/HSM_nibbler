@@ -12,7 +12,6 @@ import time
 
 from shapely.geometry import box, LinearRing, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon  # type: ignore
 from shapely.ops import linemerge, split  # type: ignore
-from shapely.geometry import CAP_STYLE, JOIN_STYLE  # type: ignore 
 
 try:
     from voronoi_centers import VoronoiCenters  # type: ignore
@@ -915,6 +914,11 @@ class BasePocket:
         """
         if len(arc.path.coords) < 3:
             return None
+
+        if arc.path.length <= 5.96e-08:
+            # Arc too short to care about.
+            return None
+
         poly_arc = Polygon(arc.path)
         for ring in self.dilated_polygon_boundaries:
             if ring.contains(poly_arc):
@@ -945,7 +949,7 @@ class InsidePocket(BasePocket):
         self.start_point: Point
         self.start_radius: float
         self.start_point, self.start_radius = self.voronoi.widest_gap()
-       
+
         # Assume starting circle is already cut.
         self.last_arc: Optional[ArcData] = None
         self.last_circle: Optional[ArcData] = create_circle(

@@ -287,7 +287,7 @@ def main():
                 except Exception as error:
                     print(error)
                     print(f"during: {filepath}\t{overlap}\t{winding}")
-                    raise error
+                    #raise error
 
                 if break_count:
                     break
