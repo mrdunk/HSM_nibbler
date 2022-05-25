@@ -125,18 +125,25 @@ def create_circle(origin: Point, radius: float) -> ArcData:
 def create_arc_from_path(
         origin: Point,
         path: LineString,
+        radius: float,
         debug: str = None
 ) -> ArcData:
     """
     Save data for the arc sections of the path.
     """
-    radius = None
+    #radius = None
     start = None
     end = None
     start_angle = None
     span_angle = None
     winding_dir = None
     debug = ""
+
+    if(abs(origin.distance(Point(path.coords[0])) -
+        origin.distance(Point(path.coords[-1]))) > 0.001):
+        print(abs(origin.distance(Point(path.coords[0])) -
+            origin.distance(Point(path.coords[-1]))))
+
     return ArcData(origin, radius, start, end, start_angle, span_angle, winding_dir, path, debug)
 
 def complete_arc(
@@ -145,6 +152,7 @@ def complete_arc(
         ) -> ArcData:
     """
     This is called a lot so any optimizations here save us time.
+    Given some properties of an arc, calculate the others.
     """
 
     # Make copy of path since we may need to modify it.
@@ -152,12 +160,7 @@ def complete_arc(
 
     start_coord = path.coords[0]
     end_coord = path.coords[-1]
-    start = Point(start_coord)
-    end = Point(end_coord)
     mid = path.interpolate(0.5, normalized=True)
-    radius = arc_data.origin.distance(start)
-    #assert abs((arc_data.origin.distance(mid) - radius) / radius) < 0.01
-    #assert abs((arc_data.origin.distance(end) - radius) / radius) < 0.01
 
     # Breaking these out once rather than separately inline later saves us ~7%
     # CPU time overall.
@@ -176,14 +179,18 @@ def complete_arc(
             (ds < 0 and de < 0 and winding_dir == ArcDir.CW)):
         # Needs reversed.
         path = LineString(path.coords[::-1])
-        start = Point(path.coords[0])
-        end = Point(path.coords[-1])
         start_angle, end_angle = end_angle, start_angle
 
     if winding_dir == ArcDir.CW:
         span_angle = (end_angle - start_angle) % (2 * math.pi)
     elif winding_dir == ArcDir.CCW:
         span_angle = -((start_angle - end_angle) % (2 * math.pi))
+
+    radius = arc_data.radius or arc_data.origin.distance(Point(path.coords[0]))
+    start = Point(arc_data.origin.x + radius * math.sin(start_angle),
+            arc_data.origin.y + radius * math.cos(start_angle))
+    end = Point(arc_data.origin.x + radius * math.sin(end_angle),
+            arc_data.origin.y + radius * math.cos(end_angle))
 
     return ArcData(
             arc_data.origin,
@@ -213,7 +220,7 @@ def arcs_from_circle_diff(
 
     arcs = []
     for arc in line_diff.geoms:
-        arcs.append(create_arc_from_path(circle.origin, arc, debug))
+        arcs.append(create_arc_from_path(circle.origin, arc, circle.radius, debug=debug))
     return arcs
 
 
@@ -959,7 +966,7 @@ class InsidePocket(BasePocket):
 
         self._queue_arcs([
             create_arc_from_path(
-                self.start_point, self.last_circle.path)
+                self.start_point, self.last_circle.path, self.last_circle.radius)
             ])
 
 class OutsidePocket(BasePocket):

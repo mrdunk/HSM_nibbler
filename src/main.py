@@ -125,7 +125,6 @@ def main(argv):
             x, y = element.path.xy
             if element.move_style == geometry.MoveStyle.RAPID_INSIDE:
                 plt.plot(x, y, linestyle='--', c="blue", linewidth=1)
-                pass
             elif element.move_style == geometry.MoveStyle.RAPID_OUTSIDE:
                 plt.plot(x, y, c="orange", linewidth=1)
             else:
