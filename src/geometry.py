@@ -131,18 +131,12 @@ def create_arc_from_path(
     """
     Save data for the arc sections of the path.
     """
-    #radius = None
     start = None
     end = None
     start_angle = None
     span_angle = None
     winding_dir = None
     debug = ""
-
-    if(abs(origin.distance(Point(path.coords[0])) -
-        origin.distance(Point(path.coords[-1]))) > 0.001):
-        print(abs(origin.distance(Point(path.coords[0])) -
-            origin.distance(Point(path.coords[-1]))))
 
     return ArcData(origin, radius, start, end, start_angle, span_angle, winding_dir, path, debug)
 
