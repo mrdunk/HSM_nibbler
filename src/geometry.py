@@ -76,7 +76,6 @@ LineData = NamedTuple("Line", [
     ("start", Optional[Point]),
     ("end", Optional[Point]),
     ("path", LineString),
-    ("safe", bool),  # TODO: Remove me. Deprecated.
     ("move_style", MoveStyle),
 ])
 
@@ -277,7 +276,6 @@ class BasePocket:
         self.open_paths: Dict[int, Tuple[float, float]] = {}
 
         self.path: List[Union[ArcData, LineData]] = []
-        self.joined_path_data = self.path  # TODO: Deprecated.
         self.pending_arc_queues: List[List[ArcData]] = []
 
         self.path_len_progress: float = 0.0
@@ -763,29 +761,24 @@ class BasePocket:
                 if part.intersects(not_cut_path_area.buffer(-0.01)):
                     move_style = MoveStyle.CUT
 
-                safe = move_style == MoveStyle.RAPID_INSIDE
-
                 lines.append(LineData(
-                    Point(part.coords[0]), Point(part.coords[-1]), part, safe, move_style))
+                    Point(part.coords[0]), Point(part.coords[-1]), part, move_style))
             # Shapely paths are not particularly accurate.
             # Clamp endpoints on actual arcs.
             lines[0] = LineData(
                     self.last_arc.end,
                     lines[0].end,
                     lines[0].path,
-                    lines[0].safe,
                     lines[0].move_style)
             lines[-1] = LineData(
                     lines[-1].start,
                     next_arc.start,
                     lines[-1].path,
-                    lines[-1].safe,
                     lines[-1].move_style)
         else:
             # Path is not entirely inside pocket.
             move_style = MoveStyle.RAPID_OUTSIDE
-            safe = False
-            lines.append(LineData(self.last_arc.end, next_arc.start, path, safe, move_style))
+            lines.append(LineData(self.last_arc.end, next_arc.start, path, move_style))
 
         return lines
 
