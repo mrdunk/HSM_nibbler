@@ -766,7 +766,21 @@ class BasePocket:
                 safe = move_style == MoveStyle.RAPID_INSIDE
 
                 lines.append(LineData(
-                    Point(part.coords[-1]), Point(part.coords[-1]), part, safe, move_style))
+                    Point(part.coords[0]), Point(part.coords[-1]), part, safe, move_style))
+            # Shapely paths are not particularly accurate.
+            # Clamp endpoints on actual arcs.
+            lines[0] = LineData(
+                    self.last_arc.end,
+                    lines[0].end,
+                    lines[0].path,
+                    lines[0].safe,
+                    lines[0].move_style)
+            lines[-1] = LineData(
+                    lines[-1].start,
+                    next_arc.start,
+                    lines[-1].path,
+                    lines[-1].safe,
+                    lines[-1].move_style)
         else:
             # Path is not entirely inside pocket.
             move_style = MoveStyle.RAPID_OUTSIDE
@@ -1033,7 +1047,3 @@ class OutsidePocketSimple(OutsidePocket):
         polygons = MultiPolygon(interiors)
         material = polygon.exterior
         super().__init__(polygons, material, step, winding_dir, generate)
-
-
-# TODO: Deprecated. Delete me.
-ToolPath = InsidePocket

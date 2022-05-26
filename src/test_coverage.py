@@ -179,7 +179,7 @@ def test_file(
     shape = dxf.dxf_to_polygon(modelspace)[-1]
 
     time_run = time.time()
-    toolpath = geometry.ToolPath(shape, overlap, winding, generate=False)
+    toolpath = geometry.InsidePocket(shape, overlap, winding, generate=False)
     time_run -= time.time()
 
     cut_area = toolpath.start_point.buffer(toolpath.start_radius + overlap / 2)
@@ -188,11 +188,11 @@ def test_file(
     combined_path = []
     combined_rapids = []
 
-    last_path = None
+    last_element = None
     for element in toolpath.path:
-        if last_path is not None:
-            assert last_path.coords[-1] == element.path.coords[0]
-        last_path = element.path
+        if last_element is not None:
+            assert last_element.end == element.start
+        last_element = element
 
         if type(element).__name__ == "Arc":
             bounds = element.path.bounds

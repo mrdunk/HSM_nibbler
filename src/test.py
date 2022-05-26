@@ -86,7 +86,7 @@ def test_file(filepath: str, overlap: float, winding: geometry.ArcDir) -> Result
     shape = dxf.dxf_to_polygon(modelspace)
 
     time_run = time.time()
-    toolpath = geometry.ToolPath(shape, overlap, winding, generate=False)
+    toolpath = geometry.InsidePocket(shape, overlap, winding, generate=False)
     time_run -= time.time()
 
     polygon_remaining = Polygon(toolpath.polygon)#.buffer(-overlap))
