@@ -71,7 +71,8 @@ def main(argv):
     #    print_entity(entity)
     #    print()
 
-    shape = dxf.dxf_to_polygon(modelspace).geoms[0]
+    shape = dxf.dxf_to_polygon(modelspace).geoms[-1]
+    #shape = dxf.dxf_to_polygon(modelspace).geoms[0]
 
     # Display shape to be cut
     x, y = shape.exterior.xy
@@ -87,7 +88,7 @@ def main(argv):
     timeslice = 100  # ms
     for index, progress in enumerate(toolpath.get_arcs(timeslice)):
         print(index, progress)
-        #if index == 100:
+        #if index == 18:
         #    break
 
         # You have access to toolpath.path here.
@@ -96,15 +97,15 @@ def main(argv):
     # Call toolpath.calculate_path() to scrap the existing and regenerate toolpath.
 
     # Display voronoi edges.
-    for edge in toolpath.voronoi.edges.values():
-        x = []
-        y = []
-        for point in edge.coords:
-            x.append(point[0])
-            y.append(point[1])
-        plt.plot(x, y, c="red", linewidth=2)
-        plt.plot(x[0], y[0], 'x', c="red")
-        plt.plot(x[-1], y[-1], 'x', c="red")
+    #for edge in toolpath.voronoi.edges.values():
+    #    x = []
+    #    y = []
+    #    for point in edge.coords:
+    #        x.append(point[0])
+    #        y.append(point[1])
+    #    plt.plot(x, y, c="red", linewidth=2)
+    #    plt.plot(x[0], y[0], 'x', c="red")
+    #    plt.plot(x[-1], y[-1], 'x', c="red")
 
     # Starting circle.
     starting_circle = geometry.create_circle(toolpath.start_point, toolpath.start_radius).path
@@ -132,6 +133,17 @@ def main(argv):
                 plt.plot(x, y, linestyle='--', c="green", linewidth=1)
 
     #plt.plot(toolpath.start_point.x, toolpath.start_point.y, 'o', c="black")
+
+    for edge in toolpath.visited_edges:
+        edge_coords = toolpath.voronoi.edges[edge].coords
+        x = []
+        y = []
+        for point in edge_coords:
+            x.append(point[0])
+            y.append(point[1])
+        plt.plot(x, y, c="red", linewidth=2)
+        plt.plot(x[0], y[0], 'x', c="red")
+        plt.plot(x[-1], y[-1], 'x', c="red")
 
     plt.gca().set_aspect('equal')
     plt.show()

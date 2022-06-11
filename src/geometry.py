@@ -135,7 +135,6 @@ def create_arc_from_path(
     start_angle = None
     span_angle = None
     winding_dir = None
-    debug = ""
 
     return ArcData(origin, radius, start, end, start_angle, span_angle, winding_dir, path, debug)
 
@@ -244,6 +243,7 @@ class BasePocket:
     last_arc: Optional[ArcData]
     last_circle: Optional[ArcData]
     start_point: Point
+    debug: bool = False
 
     def __init__(
             self,
@@ -251,7 +251,8 @@ class BasePocket:
             step: float,
             winding_dir: ArcDir,
             generate: bool = False,
-            voronoi: Optional[VoronoiCenters] = None
+            voronoi: Optional[VoronoiCenters] = None,
+            debug: bool = False,
     ) -> None:
         assert voronoi
 
@@ -259,6 +260,7 @@ class BasePocket:
         self.winding_dir: ArcDir = winding_dir
         self.generate = generate
         self.voronoi = voronoi
+        self.debug = debug
         self.polygon: Polygon = polygon
 
         self._reset()
@@ -363,16 +365,12 @@ class BasePocket:
         return LineString([coord_begin] + list(line.coords) + [coord_end])
 
     @classmethod
-    def _pid(cls, kp: float, ki: float, kd: float, seed: float
-             ) -> Generator[float, Tuple[float, float], None]:
+    def _converge(cls, kp: float) -> Generator[float, Tuple[float, float], None]:
         """
-        A PID algorithm used for recursively estimating the position of the best
-        fit arc.
+        Algorithm used for recursively estimating the position of the best fit arc.
 
         Arguments:
             kp: Proportional multiplier.
-            ki: Integral multiplier.
-            kd: Derivative multiplier.
         Yields:
             Arguments:
                 target: Target step size.
@@ -381,23 +379,15 @@ class BasePocket:
         Returns:
             Never exits Yield loop.
         """
-        error_previous: float = 0.0
-        integral: float = 0.0
-        value: float = seed
+        error: float = 0.0
+        value: float = 0.0
 
         while True:
             target, current = yield value
 
             error = target - current
-            #error = current - target
-
             prportional = kp * error
-            integral += ki * error
-            differential = kd * (error - error_previous)
-
-            value = seed + prportional + integral + differential
-
-            error_previous = error
+            value = prportional
 
     def _arc_at_distance(self, distance: float, voronoi_edge: LineString) -> Tuple[Point, float]:
         """
@@ -465,7 +455,6 @@ class BasePocket:
             voronoi_edge: LineString,
             start_distance: float,
             min_distance: float,
-            debug: bool = False
     ) -> Tuple[float, List[ArcData]]:
         """
         Calculate the arc that best fits within the path geometry.
@@ -503,21 +492,24 @@ class BasePocket:
                 about the arcs generated with an origin the specified distance
                 allong the voronoi edge.
         """
-        # A full PID algorithm is provided for estimating the center of the arc
-        # but so far all test cases have been solved with only the Proportional
-        # parameter enabled.
-        #pid = self._pid(0.75, 0, 0, 0)
-        pid = self._pid(0.76, 0, 0, 0)
-        #pid = self._pid(0.19, 0.04, 0.12, 0)
-        #pid = self._pid(0.9, 0.01, 0.01, 0)
-        #pid = self._pid(0, 0.001, 0.3, 0)
-        pid.send(None)  # type: ignore
+        # A generator to converge on desired spacing.
+        #converge = self._converge(0.75)
+        converge = self._converge(0.76)
+        converge.send(None)  # type: ignore
+
+        coverage_algos = [
+                #self._converge(0.75),
+                self._converge(0.76),
+                self._converge(0.74),
+                self._converge(0.78),
+                self._converge(0.72),
+                self._converge(0.7),
+                self._converge(0.8),
+                ]
 
         color_overide = None
 
-        desired_step = self.step
-        if (voronoi_edge.length - start_distance) < desired_step:
-            desired_step = (voronoi_edge.length - start_distance)
+        desired_step = min(self.step, (voronoi_edge.length - start_distance))
 
         distance = start_distance + desired_step
 
@@ -531,7 +523,7 @@ class BasePocket:
         log_arc = ""
         corner_zoom = CORNER_ZOOM * self.step
 
-        # Extrapolate line beyond it's actual distance to give the PID algorithm
+        # Extrapolate line beyond it's actual distance to give the algorithm
         # room to overshoot while converging on an optimal position for the new arc.
         edge_extended: LineString = self._extrapolate_line(
             dist_offset, voronoi_edge)
@@ -543,7 +535,7 @@ class BasePocket:
 
         # Loop multiple times, trying to converge on a distance along the voronoi
         # edge that provides the correct step size.
-        while count < ITERATION_COUNT:
+        while count <= ITERATION_COUNT:
             count += 1
 
             # Propose an arc.
@@ -557,19 +549,26 @@ class BasePocket:
                 circle, self.cut_area_total, color_overide)
             if not arcs:
                 # arc is entirely hidden by previous cut geometry.
+
+                if best_progress > 0:
+                    # Has made some progress.
+                    count = ITERATION_COUNT
+                    color_overide = "orange"
+                    break
+
+                # Has not found any useful arc yet.
                 # Don't record it as an arc that needs drawn.
-                arcs = [circle]
                 self.last_circle = circle
                 return(distance, [])
 
-            # Progress is measured as the furthest point he proposed arc is
+            # Progress is measured as the furthest point the proposed arc is
             # from the previous one. We are aiming for proposed == desired_step.
             if self.last_circle:
                 progress = self._furthest_spacing_arcs(arcs, self.last_circle)
             else:
                 progress = self._furthest_spacing_shapely(arcs, self.cut_area_total)
 
-            desired_step = self.step
+            desired_step = min(self.step, (voronoi_edge.length - start_distance))
             if radius < corner_zoom:
                 # Limit step size as the arc radius gets very small.
                 multiplier = (corner_zoom - radius) / corner_zoom
@@ -586,12 +585,11 @@ class BasePocket:
                     best_distance = distance
                     break
 
-            modifier = pid.send((desired_step, progress))
+            modifier = converge.send((desired_step, progress))
             distance += modifier
 
-            #log_arc += f"\t{start_distance}\t{distance}\t{progress}\t{best_progress}\t{modifier}\n"
-
-        log_arc += f"progress: {best_progress}\tdistance: {best_distance}\tlength: {voronoi_edge.length}\n"
+        log_arc += (f"progress: {best_progress}\tdistance: {best_distance}\t"
+                    f"length: {voronoi_edge.length}\n")
         log_arc += "\t--------"
 
         if count == ITERATION_COUNT:
@@ -613,9 +611,9 @@ class BasePocket:
             arcs = arcs_from_circle_diff(
                 circle, self.cut_area_total, color_overide)
 
-        distance_remain = voronoi_edge.length - distance
-        if count == ITERATION_COUNT:
+        if count == ITERATION_COUNT and self.debug:
             # Log some debug data.
+            distance_remain = voronoi_edge.length - distance
             self.arc_fail_count += 1
             log("\tDid not find an arc that fits. Spacing/Desired: "
                 f"{round(progress, 3)}/{desired_step}"
@@ -632,7 +630,7 @@ class BasePocket:
                         abs(self.worst_oversize_arc[0] - self.worst_oversize_arc[1])):
                     self.worst_oversize_arc = (progress, desired_step)
 
-        if count == ITERATION_COUNT or debug:
+        if count == ITERATION_COUNT or self.debug:
             log(log_arc)
 
         self.loop_count += count
@@ -804,6 +802,7 @@ class BasePocket:
                                ] = self.start_point.coords[0]
 
         while start_vertex is not None:
+            # yield 999.0
             combined_edge = self._join_branches(start_vertex)
             if not combined_edge:
                 start_vertex = self._choose_next_path()
@@ -826,8 +825,7 @@ class BasePocket:
                     stuck_count = int(stuck_count / 2)
                 else:
                     best_dist = dist
-
-                self._queue_arcs(new_arcs)
+                    self._queue_arcs(new_arcs)
 
                 if timeslice >= 0 and self.generate:
                     now = round(time.time() * 1000)  # (ms)
@@ -941,7 +939,8 @@ class InsidePocket(BasePocket):
             step: float,
             winding_dir: ArcDir,
             generate: bool = False,
-            voronoi: Optional[VoronoiCenters] = None
+            voronoi: Optional[VoronoiCenters] = None,
+            debug=False,
     ) -> None:
 
         if voronoi is None:
@@ -949,7 +948,7 @@ class InsidePocket(BasePocket):
 
         clean_polygon: Polygon = voronoi.polygon  # Remove duplicate points.
 
-        super().__init__(clean_polygon, step, winding_dir, generate, voronoi)
+        super().__init__(clean_polygon, step, winding_dir, generate, voronoi, debug)
 
     def _reset(self) -> None:
         super()._reset()
@@ -978,6 +977,7 @@ class OutsidePocket(BasePocket):
             step: float,
             winding_dir: ArcDir,
             generate: bool = False,
+            debug=False,
     ) -> None:
 
         polygons = clean_multipolygon(polygons)
@@ -1012,7 +1012,7 @@ class OutsidePocket(BasePocket):
         for polygon in polygons.geoms:
             material_minus_polygon = material_minus_polygon.difference(Polygon(polygon.exterior))
 
-        super().__init__(material_minus_polygon, step, winding_dir, generate, voronoi)
+        super().__init__(material_minus_polygon, step, winding_dir, generate, voronoi, debug)
 
     def _reset(self) -> None:
         super()._reset()

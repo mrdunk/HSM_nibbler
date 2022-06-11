@@ -86,7 +86,7 @@ def test_file(filepath: str, overlap: float, winding: geometry.ArcDir) -> Result
     shape = dxf.dxf_to_polygon(modelspace)
 
     time_run = time.time()
-    toolpath = geometry.InsidePocket(shape, overlap, winding, generate=False)
+    toolpath = geometry.InsidePocket(shape, overlap, winding, generate=False, debug=True)
     time_run -= time.time()
 
     polygon_remaining = Polygon(toolpath.polygon)#.buffer(-overlap))
@@ -188,7 +188,7 @@ def main(argv):
                 except Exception as error:
                     print(error)
                     print(f"during: {filepath}\t{overlap}\t{winding}")
-                    raise error
+                    #raise error
 
                 if break_count:
                     break
