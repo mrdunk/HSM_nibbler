@@ -712,9 +712,6 @@ class BasePocket:
             if arc is None:
                 continue
 
-            assert arc.path.length > 0
-            assert len(arc.path.coords) > 2
-
             winding_dir = self.winding_dir
             if winding_dir == ArcDir.Closest:
                 if self.last_arc is None:
@@ -729,6 +726,9 @@ class BasePocket:
                         winding_dir = ArcDir.CCW
 
             arc = complete_arc(arc, winding_dir)
+
+            assert arc.path.length > 0
+            assert len(arc.path.coords) > 2
 
             if self.last_arc is not None:
                 self.path += self.join_arcs(arc)
