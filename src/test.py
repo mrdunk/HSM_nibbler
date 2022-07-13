@@ -31,8 +31,13 @@ Result = NamedTuple("Result", [
     ("arc_fail_ratio", float),
     ("path_fail_ratio", float),
     ("time_per_arc", float),
-    ("worst_undersize_arc", Tuple[float, float]),
-    ("worst_oversize_arc", Tuple[float, float]),
+    ])
+
+Error = NamedTuple("Error", [
+    ("filename", str),
+    ("overlap", float),
+    ("winding", geometry.ArcDir),
+    ("error_message", str),
     ])
 
 def signal_handler(sig, frame):
@@ -54,7 +59,7 @@ def describe():
     print("\tThe number of arcs in the calculated path.")
     print("arc_attempt_ratio:")
     print("\tThe average number of arc calculations before arriving "
-            "as an arc that fits. (Lower is better.")
+            "as an arc that fits. (Lower is better.)")
     print("arc_fail_ratio:")
     print("\tThe ratio of failed attempts to find an exact fit arc. "
             "(Lower is better)")
@@ -64,16 +69,6 @@ def describe():
     print("time_per_arc:")
     print("\tThe average time taken to calculate an arc position. "
             "(Lower is better)")
-    print("worst_undersize_arc:")
-    print("\tThe worst fitting arc smaller than desired. "
-            "Displayed in the form: (actual, desired). Not particularly serious "
-            "if arc_fail_ratio is low. "
-            "(None or less difference between is better)")
-    print("worst_oversize_arc:")
-    print("\tThe worst fitting arc larger than desired. "
-            "Displayed in the form: (actual, desired). "
-            "Investigate any occurrence of more than a few percent. "
-            "(None or less difference between is better)")
     print()
 
 def test_file(filepath: str, overlap: float, winding: geometry.ArcDir) -> Result:
@@ -112,16 +107,6 @@ def test_file(filepath: str, overlap: float, winding: geometry.ArcDir) -> Result
         arc_fail_ratio = "infinite"
         path_fail_ratio = "infinite"
         time_per_arc = "infinite"
-    if toolpath.worst_undersize_arc is None:
-        worst_undersize_arc = None
-    else:
-        worst_undersize_arc = (
-                round(toolpath.worst_undersize_arc[0], 2), toolpath.worst_undersize_arc[1])
-    if toolpath.worst_oversize_arc is None:
-        worst_oversize_arc = None
-    else:
-        worst_oversize_arc = (
-                round(toolpath.worst_oversize_arc[0], 2), toolpath.worst_oversize_arc[1])
 
     return Result(
             filename,
@@ -134,8 +119,6 @@ def test_file(filepath: str, overlap: float, winding: geometry.ArcDir) -> Result
             arc_fail_ratio,
             path_fail_ratio,
             time_per_arc,
-            worst_undersize_arc,
-            worst_oversize_arc
             )
 
 def help(progname: str):
@@ -166,14 +149,15 @@ def main(argv):
         paths = [argv[1]]
 
     results = []
+    failures = []
 
     filepaths = []
     for path in paths:
         filepaths += glob(path)
-    #windings = [geometry.ArcDir.CW, geometry.ArcDir.CCW]
-    windings = [geometry.ArcDir.CW,]
-    #overlaps = [0.4, 0.8, 1.6, 3.2, 6.4]
-    overlaps = [0.4, 1.6]
+    windings = [geometry.ArcDir.CW, geometry.ArcDir.CCW, geometry.ArcDir.Closest]
+    #windings = [geometry.ArcDir.CW,]
+    overlaps = [0.4, 0.8, 1.6, 3.2, 6.4]
+    #overlaps = [0.4, 1.6]
     count = 0
     total_count = len(filepaths) * len(windings) * len(overlaps)
     for filepath in filepaths:
@@ -188,7 +172,7 @@ def main(argv):
                 except Exception as error:
                     print(error)
                     print(f"during: {filepath}\t{overlap}\t{winding}")
-                    #raise error
+                    failures.append(Error(filepath.split("/")[-1], overlap, winding, error,))
 
                 if break_count:
                     break
@@ -198,6 +182,7 @@ def main(argv):
             break
     describe()
     print(tabulate(results, headers="keys"))
+    print(tabulate(failures, headers="keys"))
 
 if __name__ == "__main__":
     main(sys.argv)

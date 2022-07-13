@@ -271,8 +271,6 @@ class BasePocket:
         self.arc_fail_count: int = 0
         self.path_fail_count: int = 0
         self.loop_count: int = 0
-        self.worst_oversize_arc: Optional[Tuple[float, float]] = None
-        self.worst_undersize_arc: Optional[Tuple[float, float]] = None
 
         self.visited_edges: Set[int] = set()
         self.open_paths: Dict[int, Tuple[float, float]] = {}
@@ -522,7 +520,6 @@ class BasePocket:
         best_progress: float = 0.0
         best_distance: float = 0.0
         dist_offset: int = 100000
-        log_arc = ""
         corner_zoom = CORNER_ZOOM * self.step
 
         # Extrapolate line beyond it's actual distance to give the algorithm
@@ -590,10 +587,6 @@ class BasePocket:
             modifier = converge.send((desired_step, progress))
             distance += modifier
 
-        log_arc += (f"progress: {best_progress}\tdistance: {best_distance}\t"
-                    f"length: {voronoi_edge.length}\n")
-        log_arc += "\t--------"
-
         if count == ITERATION_COUNT:
             color_overide = "red"
             if distance < min_distance:
@@ -621,19 +614,6 @@ class BasePocket:
                 f"{round(progress, 3)}/{desired_step}"
                 "\tdistance remaining: "
                 f"{round(distance_remain, 3)}")
-            if progress < desired_step:
-                if (self.worst_undersize_arc is None or
-                        abs(progress - desired_step) >
-                        abs(self.worst_undersize_arc[0] - self.worst_undersize_arc[1])):
-                    self.worst_undersize_arc = (progress, desired_step)
-            if progress > desired_step:
-                if (self.worst_oversize_arc is None or
-                        abs(progress - desired_step) >
-                        abs(self.worst_oversize_arc[0] - self.worst_oversize_arc[1])):
-                    self.worst_oversize_arc = (progress, desired_step)
-
-        if count == ITERATION_COUNT or self.debug:
-            log(log_arc)
 
         self.loop_count += count
 
