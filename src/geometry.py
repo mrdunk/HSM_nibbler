@@ -294,6 +294,8 @@ class BasePocket:
             for ring in [poly.exterior] + list(poly.interiors):
                 self.dilated_polygon_boundaries.append(ring.buffer(JITTER_FILTER))
 
+        self.last_arc: Optional[ArcData] = None
+
     def calculate_path(self) -> None:
         """ Reset path and restart from beginning. """
         # Create the generator.
@@ -710,6 +712,9 @@ class BasePocket:
             if arc is None:
                 continue
 
+            assert arc.path.length > 0
+            assert len(arc.path.coords) > 2
+
             winding_dir = self.winding_dir
             if winding_dir == ArcDir.Closest:
                 if self.last_arc is None:
@@ -802,7 +807,8 @@ class BasePocket:
                                ] = self.start_point.coords[0]
 
         while start_vertex is not None:
-            # yield 999.0
+            # This outer loop iterates through the voronoi vertexes, looking for
+            # a voronoi edge that has not yet had arcs calculated for it.
             combined_edge = self._join_branches(start_vertex)
             if not combined_edge:
                 start_vertex = self._choose_next_path()
@@ -812,20 +818,22 @@ class BasePocket:
             best_dist = dist
             stuck_count = int(combined_edge.length * 10 / self.step + 10)
             while abs(dist - combined_edge.length) > self.step / 20 and stuck_count > 0:
+                # This inner loop travels along a voronoi edge, trying to fit arcs
+                # that are the correct distance apart.
                 stuck_count -= 1
                 dist, new_arcs = self._calculate_arc(combined_edge, dist, best_dist)
 
                 self.path_len_progress -= best_dist
                 self.path_len_progress += dist
 
-                if dist < best_dist:
+                if dist < best_dist and False:
                     # Getting worse not better or staying the same.
-                    # This can happen legitimately but is an indication we may be
-                    # stuck.
+                    # This can happen legitimately but is an indication the algorthm
+                    # may be stuck.
                     stuck_count = int(stuck_count / 2)
                 else:
                     best_dist = dist
-                    self._queue_arcs(new_arcs)
+                self._queue_arcs(new_arcs)
 
                 if timeslice >= 0 and self.generate:
                     now = round(time.time() * 1000)  # (ms)
@@ -958,7 +966,6 @@ class InsidePocket(BasePocket):
         self.start_point, self.start_radius = self.voronoi.widest_gap()
 
         # Assume starting circle is already cut.
-        self.last_arc: Optional[ArcData] = None
         self.last_circle: Optional[ArcData] = create_circle(
             self.start_point, self.start_radius)
         self.cut_area_total = Polygon(self.last_circle.path)
@@ -1019,7 +1026,6 @@ class OutsidePocket(BasePocket):
 
         self.start_point = self.voronoi.vertex_on_perimiter() or self.voronoi.widest_gap()[0]
 
-        self.last_arc: Optional[ArcData] = None
         self.last_circle: Optional[ArcData] = None
         self.cut_area_total = Polygon(self.outer_box)
         self.cut_area_total = self.cut_area_total.difference(Polygon(self.material))
