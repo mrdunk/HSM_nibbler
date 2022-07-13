@@ -84,9 +84,9 @@ def test_file(filepath: str, overlap: float, winding: geometry.ArcDir) -> Result
     dxf_data = ezdxf.readfile(filepath)
     modelspace = dxf_data.modelspace()
     shape = dxf.dxf_to_polygon(modelspace)
-    
+
     time_run = time.time()
-    toolpath = geometry.ToolPath(shape, overlap, winding, generate=False)
+    toolpath = geometry.InsidePocket(shape, overlap, winding, generate=False, debug=True)
     time_run -= time.time()
 
     polygon_remaining = Polygon(toolpath.polygon)#.buffer(-overlap))
@@ -136,7 +136,7 @@ def test_file(filepath: str, overlap: float, winding: geometry.ArcDir) -> Result
             time_per_arc,
             worst_undersize_arc,
             worst_oversize_arc
-            ) 
+            )
 
 def help(progname: str):
     print("A program to exercise the CAM HSM 'peeling' algorithm.\n\n"
@@ -173,7 +173,7 @@ def main(argv):
     #windings = [geometry.ArcDir.CW, geometry.ArcDir.CCW]
     windings = [geometry.ArcDir.CW,]
     #overlaps = [0.4, 0.8, 1.6, 3.2, 6.4]
-    overlaps = [0.4, 1.6, 6.4]
+    overlaps = [0.4, 1.6]
     count = 0
     total_count = len(filepaths) * len(windings) * len(overlaps)
     for filepath in filepaths:
@@ -188,7 +188,7 @@ def main(argv):
                 except Exception as error:
                     print(error)
                     print(f"during: {filepath}\t{overlap}\t{winding}")
-                    raise error
+                    #raise error
 
                 if break_count:
                     break

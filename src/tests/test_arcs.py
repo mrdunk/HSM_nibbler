@@ -38,7 +38,7 @@ class TestCircle(unittest.TestCase):
 class TestArc(unittest.TestCase):
     def test_create_arc_from_path_CW(self):
         """ Create a Clockwise arc. """
-        origin = Point(0, 0)
+        origin = Point(10, -0.11)
         radius = 7
         winding_dir = geometry.ArcDir.CW
 
@@ -47,12 +47,13 @@ class TestArc(unittest.TestCase):
 
         path = path[int(len(path) / 8) : int(7 * len(path) / 8)]
 
-        arc = geometry.create_arc_from_path(origin, winding_dir, LineString(path))
+        arc = geometry.create_arc_from_path(origin, LineString(path), radius)
+        arc = geometry.complete_arc(arc, winding_dir)
 
         self.assertEqual(arc.origin, origin)
         self.assertEqual(arc.radius, radius)
-        self.assertEqual(arc.start, Point(arc.path.coords[0]))
-        self.assertEqual(arc.end, Point(arc.path.coords[-1]))
+        self.assertTrue(arc.start.equals_exact(Point(arc.path.coords[0]), 1e-6))
+        self.assertTrue(arc.end.equals_exact(Point(arc.path.coords[-1]), 1e-6))
 
         # We start this arc at the coordinate point: (radius, 0) with the origin at (0, 0).
         # Angle rotated from full circle's start/end point:
@@ -73,6 +74,12 @@ class TestArc(unittest.TestCase):
         expected_path_len = 2 * math.pi * radius * (3 / 4)
         self.assertLess(abs(arc.path.length - expected_path_len), ACCURACY * expected_path_len)
 
+        # Radius equal to all points.
+        for point in path:
+            self.assertEqual(
+                    round(arc.origin.distance(Point(path[0])), 6),
+                    round(arc.origin.distance(Point(point)), 6))
+
     def test_create_arc_from_path_CCW(self):
         """ Create a Counter-Clockwise arc. """
         origin = Point(0, 0)
@@ -84,12 +91,13 @@ class TestArc(unittest.TestCase):
 
         path = path[int(len(path) / 8) : int(7 * len(path) / 8)]
 
-        arc = geometry.create_arc_from_path(origin, winding_dir, LineString(path))
+        arc = geometry.create_arc_from_path(origin, LineString(path), radius)
+        arc = geometry.complete_arc(arc, winding_dir)
 
         self.assertEqual(arc.origin, origin)
         self.assertEqual(arc.radius, radius)
-        self.assertEqual(arc.start, Point(arc.path.coords[0]))
-        self.assertEqual(arc.end, Point(arc.path.coords[-1]))
+        self.assertTrue(arc.start.equals_exact(Point(arc.path.coords[0]), 1e-6))
+        self.assertTrue(arc.end.equals_exact(Point(arc.path.coords[-1]), 1e-6))
 
         # We start this arc at the coordinate point: (radius, 0) with the origin at (0, 0).
         # Angle rotated from full circle's start/end point:
@@ -110,37 +118,12 @@ class TestArc(unittest.TestCase):
         expected_path_len = 2 * math.pi * radius * (3 / 4)
         self.assertLess(abs(arc.path.length - expected_path_len), ACCURACY * expected_path_len)
 
+        # Radius equal to all points.
+        for point in path:
+            self.assertEqual(
+                    round(arc.origin.distance(Point(path[0])), 6),
+                    round(arc.origin.distance(Point(point)), 6))
 
-class TestJoinArcs(unittest.TestCase):
-    def test_join(self):
-        """ A simple join. No collision outside safe_area. """
-        arc1 = geometry.ArcData(
-                origin = Point(1, 1),
-                radius = 0.5,
-                start = Point(0, 1),
-                end = Point(2, 1),
-                start_angle = -math.pi / 2,
-                span_angle = math.pi,
-                path = LineString([(0, 1), (1, 1.5), (2, 1)]), # Not very round.
-                debug = ""
-                )
-        arc2 = geometry.ArcData(
-                origin = Point(1, 2),
-                radius = 0.5,
-                start = Point(0, 2),
-                end = Point(2, 2),
-                start_angle = -math.pi / 2,
-                span_angle = math.pi,
-                path = LineString([(0, 2), (1, 2.5), (2, 2)]), # Not very round.
-                debug = ""
-                )
-        safe_area = Polygon([(-10, -10), (-10, 10), (10, 10), (10, -10)])
-        line = geometry.join_arcs(arc1, arc2, safe_area)
-
-        self.assertEqual(line.start, arc1.end)
-        self.assertEqual(line.end, arc2.start)
-        self.assertEqual(line.path, LineString([arc1.end, arc2.start]))
-        self.assertTrue(line.safe)
 
 if __name__ == '__main__':
     unittest.main()
