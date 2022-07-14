@@ -959,11 +959,6 @@ class InsidePocket(BasePocket):
         self.cut_area_total = Polygon(self.last_circle.path)
         self.cut_area_total2 = Polygon(self.last_circle.path).buffer(self.step / 2)
 
-        self._queue_arcs([
-            create_arc_from_path(
-                self.start_point, self.last_circle.path, self.last_circle.radius)
-            ])
-
 class OutsidePocket(BasePocket):
     def __init__(
             self,
