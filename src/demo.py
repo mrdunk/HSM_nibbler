@@ -4,14 +4,53 @@ Experimenting with CNC machining toolpaths.
 This program is a demo which uses the main library file on test .dxf CAD files.
 """
 
-import sys
+from typing import List, Tuple
 
+import sys
+import math
 import ezdxf
 import matplotlib.pyplot as plt    # type: ignore
-
+from shapely.geometry import Point
 import dxf
 import geometry
 
+
+def spiral(center: Point, radius: float, step_size: float) -> List:
+    arcs: List[Arc] = []
+    loop: float = 0.25
+    offset: List[float] = [0.0, 0.0]
+    while loop * step_size < radius:
+        orientation = round(loop * 4) % 4
+        if orientation == 0:
+            start_angle = 0
+            offset[0] -= step_size / 4
+            section_radius = loop * step_size
+        elif orientation == 1:
+            start_angle = math.pi / 2
+            offset[1] += step_size / 4
+            section_radius = loop * step_size
+        elif orientation == 2:
+            start_angle = math.pi
+            offset[0] += step_size / 4
+            section_radius = loop * step_size
+        elif orientation == 3:
+            start_angle = 3 * math.pi / 2
+            offset[1] -= step_size / 4
+            section_radius = loop * step_size
+        else:
+            raise
+
+        section_center = Point(center.x + offset[0], center.y + offset[1])
+        arcs.append({
+            "center": section_center,
+            "radius": section_radius,
+            "start_angle": start_angle,
+            "span": math.pi / 2,
+            })
+
+        loop += 0.25  # 1/4 turn.
+
+    return arcs
 
 def print_entity(entity: ezdxf.entities.DXFGraphic, indent: int = 0):
     """ Display some debug information about a DXF file. """
@@ -76,10 +115,33 @@ def display_visited_voronoi_edges(toolpath, colour="black"):
         plt.plot(x[-1], y[-1], 'x', c=colour)
 
 def display_starting_circle(toolpath, colour="orange"):
-    # Starting circle.
-    starting_circle = geometry.create_circle(toolpath.start_point, toolpath.start_radius).path
+    starting_circle = geometry.create_circle(
+            toolpath.start_point, toolpath.start_radius).path
     x, y = starting_circle.xy
     plt.plot(x, y, c=colour, linewidth=4)
+
+def display_starting_spiral(toolpath, colour="green"):
+    """
+    Draw a starting entry spiral.
+    Just for demo purposes; not provided by HSM library.
+    """
+    starting_arcs = spiral(toolpath.start_point, toolpath.start_radius, toolpath.step)
+    last_x = toolpath.start_point.x
+    last_y = toolpath.start_point.y
+    for arc in starting_arcs:
+        angle = arc["start_angle"]
+        end_angle = arc["start_angle"] + arc["span"]
+        center = arc["center"]
+        radius = arc["radius"]
+        x = [last_x]
+        y = [last_y]
+        while angle < end_angle:
+            x.append(center.x + math.cos(angle) * radius)
+            y.append(center.y - math.sin(angle) * radius)
+            angle += 0.05
+        plt.plot(x, y, c=colour, linewidth=1)
+        last_x = x[-1]
+        last_y = y[-1]
 
 def display_toolpath(toolpath, cut_colour="green", rapid_inside_colour="blue", rapid_outside_colour="orange"):
     # Display path.
@@ -149,7 +211,8 @@ def main(argv):
     # Call toolpath.calculate_path() to scrap the existing and regenerate toolpath.
 
     display_outline(shape)
-    display_starting_circle(toolpath)
+    display_starting_spiral(toolpath)
+    #display_starting_circle(toolpath)
     display_toolpath(toolpath)
     display_voronoi(toolpath)
     # display_visited_voronoi_edges(toolpath)
