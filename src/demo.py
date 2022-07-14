@@ -183,7 +183,7 @@ def main(argv):
     """
     if len(argv) < 2:
         print("Incorrect command line arguments.")
-        print(f"Use:\n   {argv[0]} FILENAME [STEP_sIZE]")
+        print(f"Use:\n   {argv[0]} FILENAME [STEP_SIZE]")
         sys.exit(0)
     filename = argv[1]
 
