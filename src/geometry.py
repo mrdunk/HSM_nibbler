@@ -141,7 +141,7 @@ def create_arc_from_path(
 def complete_arc(
         arc_data: ArcData,
         winding_dir: ArcDir
-        ) -> ArcData:
+        ) -> Optional[ArcData]:
     """
     This is called a lot so any optimizations here save us time.
     Given some properties of an arc, calculate the others.
@@ -149,6 +149,8 @@ def complete_arc(
 
     # Make copy of path since we may need to modify it.
     path = LineString(arc_data.path)
+    if path.length == 0.0:
+        return None
 
     start_coord = path.coords[0]
     end_coord = path.coords[-1]
@@ -177,6 +179,9 @@ def complete_arc(
         span_angle = (end_angle - start_angle) % (2 * math.pi)
     elif winding_dir == ArcDir.CCW:
         span_angle = -((start_angle - end_angle) % (2 * math.pi))
+
+    if span_angle == 0.0:
+        span_angle = 2 * math.pi
 
     radius = arc_data.radius or arc_data.origin.distance(Point(path.coords[0]))
     start = Point(arc_data.origin.x + radius * math.sin(start_angle),
@@ -706,9 +711,12 @@ class BasePocket:
                         winding_dir = ArcDir.CCW
 
             arc = complete_arc(arc, winding_dir)
+            if arc is None:
+                continue
 
             assert arc.path.length > 0
             assert len(arc.path.coords) > 2
+            assert arc.span_angle != 0
 
             if self.last_arc is not None:
                 self.path += self.join_arcs(arc)
