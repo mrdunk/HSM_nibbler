@@ -23,32 +23,30 @@ def spiral(center: Point, radius: float, step_size: float) -> List:
         orientation = round(loop * 4) % 4
         if orientation == 0:
             start_angle = 0
-            offset[0] -= step_size / 4
+            offset[1] -= step_size / 4
             section_radius = loop * step_size
         elif orientation == 1:
             start_angle = math.pi / 2
-            offset[1] += step_size / 4
+            offset[0] -= step_size / 4
             section_radius = loop * step_size
         elif orientation == 2:
             start_angle = math.pi
-            offset[0] += step_size / 4
+            offset[1] += step_size / 4
             section_radius = loop * step_size
         elif orientation == 3:
             start_angle = 3 * math.pi / 2
-            offset[1] -= step_size / 4
+            offset[0] += step_size / 4
             section_radius = loop * step_size
         else:
             raise
 
         section_center = Point(center.x + offset[0], center.y + offset[1])
-        arcs.append({
-            "center": section_center,
-            "radius": section_radius,
-            "start_angle": start_angle,
-            "span": math.pi / 2,
-            })
+        arcs.append(geometry.create_arc(
+            section_center, section_radius, start_angle, math.pi / 2))
 
         loop += 0.25  # 1/4 turn.
+        
+    arcs.append(geometry.create_arc(center, radius, 0, math.pi * 2 -0.001))
 
     return arcs
 
@@ -126,22 +124,11 @@ def display_starting_spiral(toolpath, colour="green"):
     Just for demo purposes; not provided by HSM library.
     """
     starting_arcs = spiral(toolpath.start_point, toolpath.start_radius, toolpath.step)
-    last_x = toolpath.start_point.x
-    last_y = toolpath.start_point.y
-    for arc in starting_arcs:
-        angle = arc["start_angle"]
-        end_angle = arc["start_angle"] + arc["span"]
-        center = arc["center"]
-        radius = arc["radius"]
-        x = [last_x]
-        y = [last_y]
-        while angle < end_angle:
-            x.append(center.x + math.cos(angle) * radius)
-            y.append(center.y - math.sin(angle) * radius)
-            angle += 0.05
+    for element in starting_arcs:
+        x, y = element.path.xy
         plt.plot(x, y, c=colour, linewidth=1)
-        last_x = x[-1]
-        last_y = y[-1]
+
+    return
 
 def display_toolpath(toolpath, cut_colour="green", rapid_inside_colour="blue", rapid_outside_colour="orange"):
     # Display path.

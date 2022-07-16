@@ -10,6 +10,7 @@ from enum import Enum
 import math
 import time
 
+from shapely.affinity import rotate
 from shapely.geometry import box, LinearRing, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon  # type: ignore
 from shapely.ops import linemerge, split  # type: ignore
 
@@ -80,7 +81,7 @@ LineData = NamedTuple("Line", [
 ])
 
 
-def clean_linearring(ring: LinearRing) -> LinearRing:
+def clean_linear_ring(ring: LinearRing) -> LinearRing:
     """ Remove duplicate points in a LinearRing. """
     new_ring = []
     prev_point = None
@@ -98,10 +99,10 @@ def clean_linearring(ring: LinearRing) -> LinearRing:
     return LinearRing(new_ring)
 
 def clean_polygon(polygon: Polygon) -> Polygon:
-    exterior = clean_linearring(polygon.exterior)
+    exterior = clean_linear_ring(polygon.exterior)
     holes = []
     for hole in polygon.interiors:
-        holes.append(clean_linearring(hole))
+        holes.append(clean_linear_ring(hole))
 
     return Polygon(exterior, holes=holes)
 
@@ -120,6 +121,28 @@ def create_circle(origin: Point, radius: float) -> ArcData:
     return ArcData(
         origin, radius, None, None, 0, span_angle, None, origin.buffer(radius).boundary, "")
 
+def create_arc(origin: Point, radius: float, start_angle: float, span_angle: float) -> ArcData:
+    """
+    Generate a arc.
+
+    Args:
+        origin: Center of arc.
+        radius: Radius of arc.
+        start_angle: Angle from vertical. (Clockwise)
+        span_angle: Angular length of arc.
+    """
+    circle_path = origin.buffer(radius).boundary
+
+    line_up = LineString([origin, Point(origin.x, origin.y + radius * 2)])
+    circle_path = split(circle_path, line_up)
+    points = circle_path.geoms[1].coords[:] + circle_path.geoms[0].coords[:]
+    circle_path = LineString(points)
+
+    right_border = rotate(line_up, -span_angle, origin=origin, use_radians=True)
+    arc_paths = split(circle_path, right_border).geoms[0]
+
+    arc_paths = rotate(arc_paths, -start_angle, origin=origin, use_radians=True)
+    return ArcData(origin, radius, None, None, start_angle, span_angle, ArcDir.CW, arc_paths, "")
 
 def create_arc_from_path(
         origin: Point,
@@ -174,6 +197,7 @@ def complete_arc(
         # Needs reversed.
         path = LineString(path.coords[::-1])
         start_angle, end_angle = end_angle, start_angle
+        start_coord, end_coord = end_coord, start_coord
 
     if winding_dir == ArcDir.CW:
         span_angle = (end_angle - start_angle) % (2 * math.pi)
@@ -184,16 +208,12 @@ def complete_arc(
         span_angle = 2 * math.pi
 
     radius = arc_data.radius or arc_data.origin.distance(Point(path.coords[0]))
-    start = Point(arc_data.origin.x + radius * math.sin(start_angle),
-            arc_data.origin.y + radius * math.cos(start_angle))
-    end = Point(arc_data.origin.x + radius * math.sin(end_angle),
-            arc_data.origin.y + radius * math.cos(end_angle))
 
     return ArcData(
             arc_data.origin,
             radius,
-            start,
-            end,
+            start_coord,
+            end_coord,
             start_angle,
             span_angle,
             winding_dir,
