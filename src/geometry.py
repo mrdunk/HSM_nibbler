@@ -10,7 +10,7 @@ from enum import Enum
 import math
 import time
 
-from shapely.affinity import rotate
+from shapely.affinity import rotate  # type: ignore
 from shapely.geometry import box, LinearRing, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon  # type: ignore
 from shapely.ops import linemerge, split  # type: ignore
 
@@ -74,8 +74,8 @@ ArcData = NamedTuple("Arc", [
 ])
 
 LineData = NamedTuple("Line", [
-    ("start", Optional[Point]),
-    ("end", Optional[Point]),
+    ("start", Point),
+    ("end", Point),
     ("path", LineString),
     ("move_style", MoveStyle),
 ])
@@ -212,8 +212,8 @@ def complete_arc(
     return ArcData(
             arc_data.origin,
             radius,
-            start_coord,
-            end_coord,
+            Point(start_coord),
+            Point(end_coord),
             start_angle,
             span_angle,
             winding_dir,
@@ -236,6 +236,7 @@ def arcs_from_circle_diff(
         line_diff = MultiLineString([line_diff])
 
     arcs = []
+    assert circle.radius is not None
     for arc in line_diff.geoms:
         arcs.append(create_arc_from_path(circle.origin, arc, circle.radius, debug=debug))
     return arcs
@@ -713,9 +714,7 @@ class BasePocket:
         Note: This function modifies the arcs parameter in place.
         """
         while arcs:
-            arc = arcs.pop(0)
-            if arc is None:
-                continue
+            incomplete_arc = arcs.pop(0)
 
             winding_dir = self.winding_dir
             if winding_dir == ArcDir.Closest:
@@ -730,7 +729,7 @@ class BasePocket:
                     else:
                         winding_dir = ArcDir.CCW
 
-            arc = complete_arc(arc, winding_dir)
+            arc = complete_arc(incomplete_arc, winding_dir)
             if arc is None:
                 continue
 
