@@ -1048,3 +1048,42 @@ class OutsidePocketSimple(OutsidePocket):
         polygons = MultiPolygon(interiors)
         material = polygon.exterior
         super().__init__(polygons, material, step, winding_dir, generate)
+
+
+class OuterPeel(BasePocket):
+    starting_cut_area: Polygon
+
+    def __init__(
+            self,
+            polygon: Polygon,
+            step: float,
+            winding_dir: ArcDir,
+            generate: bool = False,
+            debug=False,
+    ) -> None:
+        convex_hull = polygon.convex_hull
+        dialted_convex_hull = convex_hull.buffer(10)
+
+        polygons = dialted_convex_hull
+        for p in polygon.geoms:
+            polygons = polygons.difference(Polygon(p))
+
+        self.starting_cut_area = dialted_convex_hull.difference(convex_hull)
+
+        voronoi = VoronoiCenters(polygons, preserve_widest=True)
+
+        super().__init__(polygons, step, winding_dir, generate, voronoi, debug)
+
+
+    def _reset(self) -> None:
+        super()._reset()
+
+        self.start_radius: float = 1
+        self.start_point = self.voronoi.vertex_on_perimiter() or self.voronoi.widest_gap()[0]
+
+        self.last_circle: Optional[ArcData] = create_circle(
+            self.start_point, self.start_radius)
+
+        self.cut_area_total = self.starting_cut_area
+        self.cut_area_total2 = self.starting_cut_area
+
