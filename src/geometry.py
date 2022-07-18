@@ -1062,7 +1062,8 @@ class OuterPeel(BasePocket):
             debug=False,
     ) -> None:
         convex_hull = polygon.convex_hull
-        dialted_convex_hull = convex_hull.buffer(10)
+        dialted_convex_hull = convex_hull.buffer(CORNER_ZOOM * step)
+        #dialted_convex_hull = convex_hull.buffer(4 * step)
 
         polygons = dialted_convex_hull
         for p in polygon.geoms:
@@ -1070,7 +1071,7 @@ class OuterPeel(BasePocket):
 
         self.starting_cut_area = dialted_convex_hull.difference(convex_hull)
 
-        voronoi = VoronoiCenters(polygons, preserve_widest=True)
+        voronoi = VoronoiCenters(polygons, preserve_edge=True)
 
         super().__init__(polygons, step, winding_dir, generate, voronoi, debug)
 
@@ -1086,4 +1087,6 @@ class OuterPeel(BasePocket):
 
         self.cut_area_total = self.starting_cut_area
         self.cut_area_total2 = self.starting_cut_area
+        #self.cut_area_total = Polygon(self.last_circle.path)
+        #self.cut_area_total2 = Polygon(self.last_circle.path)
 

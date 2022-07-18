@@ -14,6 +14,22 @@ import dxf
 import geometry
 
 
+def display_visited_voronoi_edges(toolpath, colour="black"):
+    """ 
+    Display the voronoi edges that were used to calculate cut geometry.
+    This should match the output of display_voronoi(...).
+    """
+    for edge in toolpath.visited_edges:
+        edge_coords = toolpath.voronoi.edges[edge].coords
+        x = []
+        y = []
+        for point in edge_coords:
+            x.append(point[0])
+            y.append(point[1])
+        plt.plot(x, y, c=colour, linewidth=1)
+        plt.plot(x[0], y[0], 'x', c=colour)
+        plt.plot(x[-1], y[-1], 'x', c=colour)
+
 def main(argv):
     """
     Example program making use of HSM "peeling" CAM.
@@ -84,7 +100,7 @@ def main(argv):
     timeslice = 100  # ms
     for index, progress in enumerate(toolpath.get_arcs(timeslice)):
         print(index, progress)
-        #if index == 100:
+        #if index == 0:
         #    break
 
         # You have access to toolpath.path here.
@@ -132,6 +148,8 @@ def main(argv):
                 plt.plot(x, y, linestyle='--', c="green", linewidth=1)
 
     plt.plot(toolpath.start_point.x, toolpath.start_point.y, 'o', c="black")
+
+    # display_visited_voronoi_edges(toolpath)
 
     plt.gca().set_aspect('equal')
     plt.show()
