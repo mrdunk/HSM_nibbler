@@ -955,11 +955,16 @@ class InsidePocket(BasePocket):
             winding_dir: ArcDir,
             generate: bool = False,
             voronoi: Optional[VoronoiCenters] = None,
+            start_point_hint: Point = None,
             debug=False,
     ) -> None:
+        self.start_point_hint = start_point_hint
 
         if voronoi is None:
-            voronoi = VoronoiCenters(polygon, preserve_widest=True)
+            if start_point_hint:
+                voronoi = VoronoiCenters(polygon, point_on_diagram_hint=start_point_hint)
+            else:
+                voronoi = VoronoiCenters(polygon, preserve_widest=True)
 
         clean_polygon: Polygon = voronoi.polygon  # Remove duplicate points.
 
@@ -970,7 +975,8 @@ class InsidePocket(BasePocket):
 
         self.start_point: Point
         self.start_radius: float
-        self.start_point, self.start_radius = self.voronoi.widest_gap()
+        self.start_point = self.voronoi.start_point
+        self.start_radius = self.voronoi.start_distance
 
         # Assume starting circle is already cut.
         self.last_circle: Optional[ArcData] = create_circle(
@@ -1062,14 +1068,14 @@ class OuterPeel(BasePocket):
             debug=False,
     ) -> None:
         convex_hull = polygon.convex_hull
-        dialted_convex_hull = convex_hull.buffer(CORNER_ZOOM * step)
-        #dialted_convex_hull = convex_hull.buffer(4 * step)
+        dilated_convex_hull = convex_hull.buffer(CORNER_ZOOM * step)
+        #dilated_convex_hull = convex_hull.buffer(4 * step)
 
-        polygons = dialted_convex_hull
+        polygons = dilated_convex_hull
         for p in polygon.geoms:
             polygons = polygons.difference(Polygon(p))
 
-        self.starting_cut_area = dialted_convex_hull.difference(convex_hull)
+        self.starting_cut_area = dilated_convex_hull.difference(convex_hull)
 
         voronoi = VoronoiCenters(polygons, preserve_edge=True)
 

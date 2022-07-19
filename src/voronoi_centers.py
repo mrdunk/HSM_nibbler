@@ -5,7 +5,7 @@ While pyvoronoi does not natively handle arcs and circles, this wrapper attempts
 to prune voronoi edges that are produces by circles that have been split into
 line segments.
 """
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 import math
 
@@ -41,12 +41,16 @@ def round_coord(value: Tuple[float, float], dp: int = ROUND_DP) -> Tuple[float, 
 
 
 class VoronoiCenters:
+    start_point: Point = None
+    start_distance: float = None
+
     def __init__(
             self,
             polygon: Polygon,
             tolerence: float = 0.1,
             preserve_widest: bool = False,
-            preserve_edge: bool = False
+            preserve_edge: bool = False,
+            point_on_diagram_hint: Union[Point, LineString, Polygon] = None
             ) -> None:
         """
         Arguments:
@@ -165,17 +169,25 @@ class VoronoiCenters:
             # If we remove this vertex subsequent calls will not work.
             # If we cached the value instead, client code will not be able to use the
             # returned vertex value as an index into this class's data structures.
-            p, _ = self.widest_gap()
-            if p is not None:
-                preserve.append(p.coords[0])
+            self.start_point, self.start_distance = self.widest_gap()
+            if self.start_point is not None:
+                preserve.append(self.start_point.coords[0])
         if preserve_edge:
             # The vertex_on_perimiter() method picks a vertex that touches the
             # perimeter. We might not want to clean that up if we want to cut in from
             # the edge.
-            p = self.vertex_on_perimiter()
-            preserve.append(p.coords[0])
+            self.start_point = self.vertex_on_perimiter()
+            preserve.append(self.start_point.coords[0])
+            self.start_distance = 0
 
         self._drop_irrelevant_edges(preserve)
+
+        if point_on_diagram_hint is not None:
+            # Find the point on the voronoi diagram closest to the point_on_diagram_hint.
+            if isinstance(point_on_diagram_hint, Point):
+                p, _ = self.vertex_near_point(point_on_diagram_hint)
+                preserve.append(p.coords[0])
+
         self._split_on_pocket_edge()
         self._combine_edges(preserve)
 
@@ -238,7 +250,7 @@ class VoronoiCenters:
         # .simplify(...) will fix issues caused by input coordinate jitter.
         self.polygon = self.polygon.simplify(0.05)
 
-    def _store_edge(self, edge: LineString, replace_index=None) -> None:
+    def _store_edge(self, edge: LineString, replace_index=None) -> int:
         """
         Store a vorinoi edge and associated vertices in out internal data structures.
         """
@@ -260,6 +272,8 @@ class VoronoiCenters:
             self.vertex_to_edges.setdefault(
                 vert_index_b, []).append(edge_index)
         self.edge_to_vertex[edge_index] = (vert_index_a, vert_index_b)
+
+        return edge_index
 
     def _remove_edge(self, edge_index: int) -> None:
         """
@@ -440,9 +454,8 @@ class VoronoiCenters:
         to_prune: Set[int] = set()
         for edge_i in self.edges:
             vert_a, vert_b = self.edge_to_vertex[edge_i]
-            if vert_a not in preserve:
+            if vert_a not in preserve and vert_b not in preserve:
                 to_prune |= self._follow_cleanup_candidates(vert_a)
-            if vert_b not in preserve:
                 to_prune |= self._follow_cleanup_candidates(vert_b)
 
         for edge_i in to_prune:
@@ -487,4 +500,53 @@ class VoronoiCenters:
                 distance = dist
                 closest = Point(vertex)
         return closest
+
+    def vertex_near_point(self, point: Point) -> Tuple[Point, float]:
+        closest_edge = None
+        closest_index = None
+        closest_dist = None
+        for edge_index, edge in self.edges.items():
+            dist = point.distance(edge)
+            proposed_new_vertex = round_coord(nearest_points(edge, point)[0].coords[0])
+            proposed_new_edge = LineString([point, proposed_new_vertex])
+            if closest_dist is None or dist < closest_dist and proposed_new_edge.within(self.polygon):
+                closest_dist = dist
+                closest_index = edge_index
+                closest_edge = edge
+
+        new_vertex = round_coord(nearest_points(closest_edge, point)[0].coords[0])
+        #if self.distance_from_geom(Point(new_vertex)) < 2 * self.tolerence:
+        #    new_vertex = closest_edge.interpolate(closest_edge.length - 2 * self.tolerence)
+        #    new_vertex = round_coord(new_vertex)
+
+        if new_vertex not in self.vertex_to_edges:
+            print(1)
+            v1, v2 = self.edge_to_vertex[closest_index]
+            new_edge_1 = LineString([v1, new_vertex])
+            new_edge_2 = LineString([v2, new_vertex])
+
+            assert new_edge_1.length > 0
+            assert new_edge_2.length > 0
+
+            self._remove_edge(closest_index)
+            
+            self._store_edge(new_edge_1)
+            self._store_edge(new_edge_2)
+
+
+        new_edge_3 = LineString([point, new_vertex])
+
+        if new_edge_3.length == 0:
+            print(2)
+            self.start_point = Point(new_vertex)
+            self.start_distance = self.distance_from_geom(Point(new_vertex))
+            return Point(new_vertex), self.start_distance
+
+        self._store_edge(new_edge_3)
+
+        print(3)
+        self.start_point = point
+        self.start_distance = self.distance_from_geom(point)
+        return point, self.start_distance
+
 
