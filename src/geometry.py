@@ -1079,20 +1079,14 @@ class OuterPeel(BasePocket):
 
         voronoi = VoronoiCenters(polygons, preserve_edge=True)
 
-        super().__init__(polygons, step, winding_dir, generate, voronoi, debug)
-
-
-    def _reset(self) -> None:
-        super()._reset()
-
         self.start_radius: float = 1
-        self.start_point = self.voronoi.vertex_on_perimiter() or self.voronoi.widest_gap()[0]
+        self.start_point = voronoi.vertex_on_perimiter() or voronoi.widest_gap()[0]
 
         self.last_circle: Optional[ArcData] = create_circle(
             self.start_point, self.start_radius)
 
         self.cut_area_total = self.starting_cut_area
         self.cut_area_total2 = self.starting_cut_area
-        #self.cut_area_total = Polygon(self.last_circle.path)
-        #self.cut_area_total2 = Polygon(self.last_circle.path)
+
+        super().__init__(polygons, step, winding_dir, generate, voronoi, debug)
 
