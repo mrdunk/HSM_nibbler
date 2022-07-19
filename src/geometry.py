@@ -1105,7 +1105,7 @@ class Refine(BasePocket):
             debug=False,
     ) -> None:
         polygons = previous_polygon
-        polygons.union(polygon)
+        polygons = polygons.union(polygon)
 
         self.starting_cut_area = previous_polygon
         self.cut_area_total = previous_polygon
@@ -1114,7 +1114,7 @@ class Refine(BasePocket):
         voronoi = VoronoiCenters(polygons, preserve_edge=True)
 
         self.start_radius: float = 1
-        self.start_point = voronoi.vertex_on_perimiter() or voronoi.widest_gap()[0]
+        self.start_point = voronoi.vertex_on_perimiter()
 
         self.last_circle: Optional[ArcData] = create_circle(
             self.start_point, self.start_radius)
