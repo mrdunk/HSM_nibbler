@@ -1090,3 +1090,34 @@ class OuterPeel(BasePocket):
 
         super().__init__(polygons, step, winding_dir, generate, voronoi, debug)
 
+
+class Refine(BasePocket):
+    """ TODO: Untested. """
+    starting_cut_area: Polygon
+
+    def __init__(
+            self,
+            polygon: Polygon,
+            previous_polygon: Polygon,
+            step: float,
+            winding_dir: ArcDir,
+            generate: bool = False,
+            debug=False,
+    ) -> None:
+        polygons = previous_polygon
+        polygons.difference(polygon)
+
+        self.starting_cut_area = previous_polygon
+        self.cut_area_total = previous_polygon
+        self.cut_area_total2 = previous_polygon
+
+        voronoi = VoronoiCenters(polygons, preserve_edge=True)
+
+        self.start_radius: float = 1
+        self.start_point = voronoi.vertex_on_perimiter() or voronoi.widest_gap()[0]
+
+        self.last_circle: Optional[ArcData] = create_circle(
+            self.start_point, self.start_radius)
+
+        super().__init__(polygons, step, winding_dir, generate, voronoi, debug)
+
