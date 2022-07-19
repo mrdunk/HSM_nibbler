@@ -1105,7 +1105,7 @@ class Refine(BasePocket):
             debug=False,
     ) -> None:
         polygons = previous_polygon
-        polygons.difference(polygon)
+        polygons.union(polygon)
 
         self.starting_cut_area = previous_polygon
         self.cut_area_total = previous_polygon
