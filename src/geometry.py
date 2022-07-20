@@ -1134,7 +1134,7 @@ class RefineOuter(BasePocket):
 
     def __init__(
             self,
-            polygon: Polygon,
+            polygon: Union[Polygon, MultiPolygon],
             previous_polygon: Polygon,
             step: float,
             winding_dir: ArcDir,
@@ -1143,11 +1143,17 @@ class RefineOuter(BasePocket):
             starting_point: Point = None,
             debug=False,
     ) -> None:
-        if previous_polygon.type != "MultiPolygon":
-            previous_polygon = MultiPolygon([previous_polygon])
+        if polygon.type != "MultiPolygon":
+            polygon = MultiPolygon([polygon])
 
-        polygons = Polygon(previous_polygon.geoms[0].exterior)
-        polygons = polygons.difference(Polygon(polygon.exterior))
+        #if previous_polygon.type != "MultiPolygon":
+        #    previous_polygon = MultiPolygon([previous_polygon])
+
+        #polygons = Polygon(previous_polygon.geoms[0].exterior)
+
+        polygons = Polygon(previous_polygon.exterior)
+        for p in polygon.geoms:
+            polygons = polygons.difference(Polygon(p))
 
         self.starting_cut_area = previous_polygon
         self.cut_area_total = previous_polygon

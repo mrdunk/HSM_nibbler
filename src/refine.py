@@ -10,19 +10,22 @@ import sys
 import math
 import ezdxf
 import matplotlib.pyplot as plt    # type: ignore
-from shapely.geometry import Point
+from shapely.geometry import MultiPolygon, Point, Polygon
 import dxf
 import geometry
 
 
-def display_outline(shape, colour="blue"):
+def display_outline(shapes, colour="blue"):
     """ Display the outline of the shape to be cut. """
-    x, y = shape.exterior.xy
-    plt.plot(x, y, c=colour, linewidth=2)
-
-    for interior in shape.interiors:
-        x, y = interior.xy
+    if shapes.type != "MultiPolygon":
+        shapes = MultiPolygon([shapes])
+    for shape in shapes.geoms:
+        x, y = shape.exterior.xy
         plt.plot(x, y, c=colour, linewidth=2)
+
+        for interior in shape.interiors:
+            x, y = interior.xy
+            plt.plot(x, y, c=colour, linewidth=2)
 
 def display_voronoi(toolpath, colour="red"):
     """ Display the voronoi edges. These are equidistant from the shape's edges. """
@@ -73,14 +76,14 @@ def display_toolpath(toolpath, cut_colour="green", rapid_inside_colour="blue", r
                 plt.plot(x, y, linestyle='--', c=cut_colour, linewidth=1)
 
 
-def generate_tool_path(shape, step_size, inner=True):
+def generate_tool_path(shapes, step_size, inner=True):
     """ Calculate the toolpath. """
 
     if inner:
-        previous_cut = shape.buffer(-1)
+        previous_cut = shapes.geoms[0].buffer(-1)
 
         toolpath = geometry.RefineInnerPocket(
-                shape,
+                shapes,
                 previous_cut,
                 step_size,
                 geometry.ArcDir.Closest,
@@ -88,10 +91,14 @@ def generate_tool_path(shape, step_size, inner=True):
                 #starting_point=Point(30, 30),
                 debug=True)
     else:
-        previous_cut = shape.buffer(10).difference(shape.buffer(5))
+        previous_cut = Polygon()
+        for shape in shapes.geoms:
+            shape_poly = Polygon(shape.exterior)
+            previous_cut = previous_cut.union(
+                    shape_poly.buffer(5).difference(shape_poly.buffer(3)))
 
         toolpath = geometry.RefineOuter(
-                shape,
+                shapes,
                 previous_cut,
                 step_size,
                 geometry.ArcDir.Closest,
@@ -133,14 +140,14 @@ def main(argv):
     print(f"filename: {filename}\n step_size: {step_size}\n")
 
     modelspace = dxf_data.modelspace()
-    shape = dxf.dxf_to_polygon(modelspace).geoms[-1]
+    shapes = dxf.dxf_to_polygon(modelspace)
 
-    #toolpath = generate_tool_path(shape, step_size, inner=False)
-    toolpath = generate_tool_path(shape, step_size, inner=True)
+    toolpath = generate_tool_path(shapes, step_size, inner=False)
+    #toolpath = generate_tool_path(shapes, step_size, inner=True)
 
-    display_outline(shape)
+    display_outline(shapes)
     display_toolpath(toolpath)
-    display_voronoi(toolpath)
+    #display_voronoi(toolpath)
     # display_visited_voronoi_edges(toolpath)
 
     plt.gca().set_aspect('equal')
