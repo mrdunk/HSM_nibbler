@@ -1079,8 +1079,8 @@ class OuterPeel(BasePocket):
 
         voronoi = VoronoiCenters(polygons, preserve_edge=True)
 
-        self.start_radius: float = 1
-        self.start_point = voronoi.vertex_on_perimiter() or voronoi.widest_gap()[0]
+        self.start_point = voronoi.start_point
+        self.start_radius = voronoi.start_distance
 
         self.last_circle: Optional[ArcData] = create_circle(
             self.start_point, self.start_radius)
@@ -1091,8 +1091,8 @@ class OuterPeel(BasePocket):
         super().__init__(polygons, step, winding_dir, generate, voronoi, debug)
 
 
-class Refine(BasePocket):
-    """ TODO: Untested. """
+class RefineInnerPocket(BasePocket):
+    """ TODO: Not well tested. """
     starting_cut_area: Polygon
 
     def __init__(
@@ -1102,6 +1102,8 @@ class Refine(BasePocket):
             step: float,
             winding_dir: ArcDir,
             generate: bool = False,
+            voronoi: Optional[VoronoiCenters] = None,
+            start_point_hint: Point = None,
             debug=False,
     ) -> None:
         polygons = previous_polygon
@@ -1111,10 +1113,54 @@ class Refine(BasePocket):
         self.cut_area_total = previous_polygon
         self.cut_area_total2 = previous_polygon
 
-        voronoi = VoronoiCenters(polygons, preserve_edge=True)
+        if voronoi is None:
+            if start_point_hint:
+                voronoi = VoronoiCenters(polygons, point_on_diagram_hint=start_point_hint)
+            else:
+                voronoi = VoronoiCenters(polygons, preserve_widest=True)
 
-        self.start_radius: float = 1
-        self.start_point = voronoi.vertex_on_perimiter()
+        self.start_point = voronoi.start_point
+        self.start_radius = voronoi.start_distance
+
+        self.last_circle: Optional[ArcData] = create_circle(
+            self.start_point, self.start_radius)
+
+        super().__init__(polygons, step, winding_dir, generate, voronoi, debug)
+
+
+class RefineOuter(BasePocket):
+    """ TODO: Not well tested. """
+    starting_cut_area: Polygon
+
+    def __init__(
+            self,
+            polygon: Polygon,
+            previous_polygon: Polygon,
+            step: float,
+            winding_dir: ArcDir,
+            generate: bool = False,
+            voronoi: Optional[VoronoiCenters] = None,
+            start_point_hint: Point = None,
+            debug=False,
+    ) -> None:
+        if previous_polygon.type != "MultiPolygon":
+            previous_polygon = MultiPolygon([previous_polygon])
+
+        polygons = Polygon(previous_polygon.geoms[0].exterior)
+        polygons = polygons.difference(Polygon(polygon.exterior))
+
+        self.starting_cut_area = previous_polygon
+        self.cut_area_total = previous_polygon
+        self.cut_area_total2 = previous_polygon
+
+        if voronoi is None:
+            if start_point_hint:
+                voronoi = VoronoiCenters(polygons, point_on_diagram_hint=start_point_hint)
+            else:
+                voronoi = VoronoiCenters(polygons, preserve_edge=True)
+
+        self.start_point = voronoi.start_point
+        self.start_radius = voronoi.start_distance
 
         self.last_circle: Optional[ArcData] = create_circle(
             self.start_point, self.start_radius)

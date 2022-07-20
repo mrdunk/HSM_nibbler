@@ -50,7 +50,7 @@ class VoronoiCenters:
             tolerence: float = 0.1,
             preserve_widest: bool = False,
             preserve_edge: bool = False,
-            point_on_diagram_hint: Union[Point, LineString, Polygon] = None
+            point_on_diagram_hint: Point = None
             ) -> None:
         """
         Arguments:
@@ -184,9 +184,8 @@ class VoronoiCenters:
 
         if point_on_diagram_hint is not None:
             # Find the point on the voronoi diagram closest to the point_on_diagram_hint.
-            if isinstance(point_on_diagram_hint, Point):
-                p, _ = self.vertex_near_point(point_on_diagram_hint)
-                preserve.append(p.coords[0])
+            self.start_point, self.start_distance = self.vertex_near_point(point_on_diagram_hint)
+            preserve.append(self.start_point.coords[0])
 
         self._split_on_pocket_edge()
         self._combine_edges(preserve)
@@ -538,15 +537,11 @@ class VoronoiCenters:
 
         if new_edge_3.length == 0:
             print(2)
-            self.start_point = Point(new_vertex)
-            self.start_distance = self.distance_from_geom(Point(new_vertex))
-            return Point(new_vertex), self.start_distance
+            return Point(new_vertex), self.distance_from_geom(Point(new_vertex))
 
         self._store_edge(new_edge_3)
 
         print(3)
-        self.start_point = point
-        self.start_distance = self.distance_from_geom(point)
-        return point, self.start_distance
+        return point, self.distance_from_geom(point)
 
 
