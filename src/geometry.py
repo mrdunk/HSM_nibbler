@@ -955,14 +955,14 @@ class InsidePocket(BasePocket):
             winding_dir: ArcDir,
             generate: bool = False,
             voronoi: Optional[VoronoiCenters] = None,
-            start_point_hint: Point = None,
+            starting_point: Point = None,
             debug=False,
     ) -> None:
-        self.start_point_hint = start_point_hint
+        self.starting_point = starting_point
 
         if voronoi is None:
-            if start_point_hint:
-                voronoi = VoronoiCenters(polygon, point_on_diagram_hint=start_point_hint)
+            if starting_point:
+                voronoi = VoronoiCenters(polygon, starting_point=starting_point)
             else:
                 voronoi = VoronoiCenters(polygon, preserve_widest=True)
 
@@ -1103,7 +1103,7 @@ class RefineInnerPocket(BasePocket):
             winding_dir: ArcDir,
             generate: bool = False,
             voronoi: Optional[VoronoiCenters] = None,
-            start_point_hint: Point = None,
+            starting_point: Point = None,
             debug=False,
     ) -> None:
         polygons = previous_polygon
@@ -1114,8 +1114,8 @@ class RefineInnerPocket(BasePocket):
         self.cut_area_total2 = previous_polygon
 
         if voronoi is None:
-            if start_point_hint:
-                voronoi = VoronoiCenters(polygons, point_on_diagram_hint=start_point_hint)
+            if starting_point:
+                voronoi = VoronoiCenters(polygons, starting_point=starting_point)
             else:
                 voronoi = VoronoiCenters(polygons, preserve_widest=True)
 
@@ -1140,7 +1140,7 @@ class RefineOuter(BasePocket):
             winding_dir: ArcDir,
             generate: bool = False,
             voronoi: Optional[VoronoiCenters] = None,
-            start_point_hint: Point = None,
+            starting_point: Point = None,
             debug=False,
     ) -> None:
         if previous_polygon.type != "MultiPolygon":
@@ -1154,8 +1154,8 @@ class RefineOuter(BasePocket):
         self.cut_area_total2 = previous_polygon
 
         if voronoi is None:
-            if start_point_hint:
-                voronoi = VoronoiCenters(polygons, point_on_diagram_hint=start_point_hint)
+            if starting_point:
+                voronoi = VoronoiCenters(polygons, starting_point=starting_point)
             else:
                 voronoi = VoronoiCenters(polygons, preserve_edge=True)
 

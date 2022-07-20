@@ -77,7 +77,7 @@ def generate_tool_path(shape, step_size, inner=True):
     """ Calculate the toolpath. """
 
     if inner:
-        previous_cut = shape.buffer(-10)
+        previous_cut = shape.buffer(-1)
 
         toolpath = geometry.RefineInnerPocket(
                 shape,
@@ -85,7 +85,7 @@ def generate_tool_path(shape, step_size, inner=True):
                 step_size,
                 geometry.ArcDir.Closest,
                 generate=True,
-                start_point_hint=Point(30, 30),
+                #starting_point=Point(30, 30),
                 debug=True)
     else:
         previous_cut = shape.buffer(10).difference(shape.buffer(5))
@@ -135,7 +135,8 @@ def main(argv):
     modelspace = dxf_data.modelspace()
     shape = dxf.dxf_to_polygon(modelspace).geoms[-1]
 
-    toolpath = generate_tool_path(shape, step_size, inner=False)
+    #toolpath = generate_tool_path(shape, step_size, inner=False)
+    toolpath = generate_tool_path(shape, step_size, inner=True)
 
     display_outline(shape)
     display_toolpath(toolpath)
