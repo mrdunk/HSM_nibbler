@@ -36,6 +36,10 @@ VORONOI_RES = 10**(ROUND_DP + 1)
 EPS = 1 / (10 ** ROUND_DP)
 
 
+class PointOutsidePart(Exception):
+    pass
+
+
 def round_coord(value: Tuple[float, float], dp: int = ROUND_DP) -> Tuple[float, float]:
     return (round(value[0], dp), round(value[1], dp))
 
@@ -507,6 +511,9 @@ class VoronoiCenters:
         If this point is not on the existing voronoi diagram it will need a new edge
         to be added to the diagram to connect this starting point.
         """
+        if not point.within(self.polygon):
+            raise PointOutsidePart(f"{point} not inside geometry")
+
         closest_edge = None
         closest_index = None
         closest_dist = None
