@@ -15,6 +15,9 @@ import dxf
 import geometry
 
 
+def display_start_point(toolpath, colour="purple"):
+    plt.plot(toolpath.start_point.x, toolpath.start_point.y, marker='o', c=colour, markersize=10)
+
 def display_outline(shapes, colour="blue"):
     """ Display the outline of the shape to be cut. """
     if shapes.type != "MultiPolygon":
@@ -80,7 +83,7 @@ def generate_tool_path(shapes, step_size, inner=True):
     """ Calculate the toolpath. """
 
     if inner:
-        previous_cut = shapes.geoms[0].buffer(-1)
+        previous_cut = shapes.geoms[0].buffer(-5)
 
         toolpath = geometry.RefineInnerPocket(
                 shapes,
@@ -102,6 +105,7 @@ def generate_tool_path(shapes, step_size, inner=True):
                 previous_cut,
                 step_size,
                 geometry.ArcDir.Closest,
+                #starting_point=Point(44, 0),
                 generate=True,
                 debug=True)
 
@@ -147,8 +151,9 @@ def main(argv):
 
     display_outline(shapes)
     display_toolpath(toolpath)
-    #display_voronoi(toolpath)
+    display_voronoi(toolpath)
     # display_visited_voronoi_edges(toolpath)
+    display_start_point(toolpath)
 
     plt.gca().set_aspect('equal')
     plt.show()

@@ -41,8 +41,8 @@ def round_coord(value: Tuple[float, float], dp: int = ROUND_DP) -> Tuple[float, 
 
 
 class VoronoiCenters:
-    start_point: Point = None
-    start_distance: float = None
+    start_point: Optional[Point] = None
+    start_distance: Optional[float] = None
 
     def __init__(
             self,
@@ -249,12 +249,12 @@ class VoronoiCenters:
         # .simplify(...) will fix issues caused by input coordinate jitter.
         self.polygon = self.polygon.simplify(0.05)
 
-    def _store_edge(self, edge: LineString, replace_index=None) -> int:
+    def _store_edge(self, edge: LineString, replace_index=None):
         """
         Store a vorinoi edge and associated vertices in out internal data structures.
         """
         if edge.length == 0:
-            return
+            return 
 
         edge_index = replace_index
         if edge_index is None:
@@ -272,7 +272,7 @@ class VoronoiCenters:
                 vert_index_b, []).append(edge_index)
         self.edge_to_vertex[edge_index] = (vert_index_a, vert_index_b)
 
-        return edge_index
+        return
 
     def _remove_edge(self, edge_index: int) -> None:
         """
@@ -524,6 +524,8 @@ class VoronoiCenters:
         new_vertex = round_coord(nearest_points(closest_edge, point)[0].coords[0])
 
         if new_vertex not in self.vertex_to_edges:
+            assert closest_index is not None
+
             v1, v2 = self.edge_to_vertex[closest_index]
             new_edge_1 = LineString([v1, new_vertex])
             new_edge_2 = LineString([v2, new_vertex])

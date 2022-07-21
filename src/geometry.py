@@ -15,7 +15,7 @@ from shapely.geometry import box, LinearRing, LineString, MultiLineString, Multi
 from shapely.ops import linemerge, split  # type: ignore
 
 try:
-    from voronoi_centers import VoronoiCenters  # type: ignore
+    from voronoi_centers import round_coord, VoronoiCenters  # type: ignore
     from helpers import log  # type: ignore
 except ImportError:
     from cam.voronoi_centers import VoronoiCenters  # type: ignore
@@ -976,7 +976,7 @@ class InsidePocket(BasePocket):
         self.start_point: Point
         self.start_radius: float
         self.start_point = self.voronoi.start_point
-        self.start_radius = self.voronoi.start_distance
+        self.start_radius = self.voronoi.start_distance or 0
 
         # Assume starting circle is already cut.
         self.last_circle: Optional[ArcData] = create_circle(
@@ -1083,7 +1083,7 @@ class OuterPeel(BasePocket):
         self.start_radius = voronoi.start_distance
 
         self.last_circle: Optional[ArcData] = create_circle(
-            self.start_point, self.start_radius)
+            self.start_point, self.start_radius or 1)
 
         self.cut_area_total = self.starting_cut_area
         self.cut_area_total2 = self.starting_cut_area
@@ -1098,7 +1098,7 @@ class RefineInnerPocket(BasePocket):
     def __init__(
             self,
             polygon: Polygon,
-            previous_polygon: Polygon,
+            cleared_polygon: Polygon,
             step: float,
             winding_dir: ArcDir,
             generate: bool = False,
@@ -1106,12 +1106,12 @@ class RefineInnerPocket(BasePocket):
             starting_point: Point = None,
             debug=False,
     ) -> None:
-        polygons = previous_polygon
+        polygons = cleared_polygon
         polygons = polygons.union(polygon)
 
-        self.starting_cut_area = previous_polygon
-        self.cut_area_total = previous_polygon
-        self.cut_area_total2 = previous_polygon
+        self.starting_cut_area = cleared_polygon
+        self.cut_area_total = cleared_polygon
+        self.cut_area_total2 = cleared_polygon
 
         if voronoi is None:
             if starting_point:
@@ -1123,19 +1123,21 @@ class RefineInnerPocket(BasePocket):
         self.start_radius = voronoi.start_distance
 
         self.last_circle: Optional[ArcData] = create_circle(
-            self.start_point, self.start_radius)
+            self.start_point, self.start_radius or 1)
 
         super().__init__(polygons, step, winding_dir, generate, voronoi, debug)
 
 
 class RefineOuter(BasePocket):
-    """ TODO: Not well tested. """
+    """
+    Calculate outside HSM path unconstrained outside.
+    """
     starting_cut_area: Polygon
 
     def __init__(
             self,
             polygon: Union[Polygon, MultiPolygon],
-            previous_polygon: Polygon,
+            cleared_polygon: Polygon,
             step: float,
             winding_dir: ArcDir,
             generate: bool = False,
@@ -1146,30 +1148,46 @@ class RefineOuter(BasePocket):
         if polygon.type != "MultiPolygon":
             polygon = MultiPolygon([polygon])
 
-        #if previous_polygon.type != "MultiPolygon":
-        #    previous_polygon = MultiPolygon([previous_polygon])
-
-        #polygons = Polygon(previous_polygon.geoms[0].exterior)
-
-        polygons = Polygon(previous_polygon.exterior)
+        polygons = Polygon(cleared_polygon.exterior)
         for p in polygon.geoms:
             polygons = polygons.difference(Polygon(p))
 
-        self.starting_cut_area = previous_polygon
-        self.cut_area_total = previous_polygon
-        self.cut_area_total2 = previous_polygon
+        self.starting_cut_area = cleared_polygon
+        self.cut_area_total = cleared_polygon
+        self.cut_area_total2 = cleared_polygon
 
         if voronoi is None:
             if starting_point:
                 voronoi = VoronoiCenters(polygons, starting_point=starting_point)
+                self.start_point = voronoi.start_point
+                self.start_radius = voronoi.start_distance
             else:
                 voronoi = VoronoiCenters(polygons, preserve_edge=True)
-
-        self.start_point = voronoi.start_point
-        self.start_radius = voronoi.start_distance
+                self.start_point, self.start_radius = self._calculate_start_point(
+                        voronoi, cleared_polygon)
 
         self.last_circle: Optional[ArcData] = create_circle(
-            self.start_point, self.start_radius)
+            self.start_point, self.start_radius or 1)
 
         super().__init__(polygons, step, winding_dir, generate, voronoi, debug)
+
+    @staticmethod
+    def _calculate_start_point(
+            voronoi: VoronoiCenters,
+            cleared_polygon: Polygon) -> Tuple[Point, float]:
+        """
+        Recalculate the start point half way between the one currently set on the
+        outer perimeter of the cleared_polygon and the inner perimeter of the
+        cleared_polygon.
+        """
+        perimiter_point = voronoi.start_point
+        assert perimiter_point is not None
+        voronoi_edge_index = voronoi.vertex_to_edges[perimiter_point.coords[0]]
+        assert len(voronoi_edge_index) == 1
+        voronoi_edge = voronoi.edges[voronoi_edge_index[0]]
+        edge_section = cleared_polygon.intersection(voronoi_edge)
+        new_start_point = Point(round_coord(
+            edge_section.interpolate(0.5, normalized=True).coords[0]))
+        voronoi.set_starting_point(new_start_point)
+        return new_start_point, edge_section.length / 2
 
