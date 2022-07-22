@@ -56,6 +56,10 @@ class MoveStyle(Enum):
     RAPID_INSIDE = 1
     CUT = 2
 
+class StartPointTactic:
+    PERIMITER = 0  # Starting point hint for outer pockets.
+    WIDEST = 1     # Starting point hint for inner pockets.
+
 
 ArcData = NamedTuple("Arc", [
     ("origin", Point),
@@ -948,7 +952,7 @@ class BasePocket:
         return arc
 
 
-class InsidePocket(BasePocket):
+class InsidePocket_OLD(BasePocket):
     def __init__(
             self,
             polygon: Polygon,
@@ -1057,42 +1061,7 @@ class OutsidePocketSimple(OutsidePocket):
         super().__init__(polygons, material, step, winding_dir, generate)
 
 
-class OuterPeel(BasePocket):
-    starting_cut_area: Polygon
-
-    def __init__(
-            self,
-            polygon: Polygon,
-            step: float,
-            winding_dir: ArcDir,
-            generate: bool = False,
-            debug=False,
-    ) -> None:
-        convex_hull = polygon.convex_hull
-        dilated_convex_hull = convex_hull.buffer(CORNER_ZOOM * step)
-        #dilated_convex_hull = convex_hull.buffer(4 * step)
-
-        polygons = dilated_convex_hull
-        for p in polygon.geoms:
-            polygons = polygons.difference(Polygon(p))
-
-        self.starting_cut_area = dilated_convex_hull.difference(convex_hull)
-
-        voronoi = VoronoiCenters(polygons, preserve_edge=True)
-
-        self.start_point = voronoi.start_point
-        self.start_radius = voronoi.start_distance
-
-        self.last_circle: Optional[ArcData] = create_circle(
-            self.start_point, self.start_radius or 1)
-
-        self.cut_area_total = self.starting_cut_area
-        self.cut_area_total2 = self.starting_cut_area
-
-        super().__init__(polygons, step, winding_dir, generate, voronoi, debug)
-
-
-class RefineInnerPocket(BasePocket):
+class Pocket(BasePocket):
     """
     Calculate HSM path for pocket where some of the pocket has already been cleared.
     """
@@ -1101,31 +1070,30 @@ class RefineInnerPocket(BasePocket):
     def __init__(
             self,
             to_cut: Polygon,
-            already_cut: Polygon,
             step: float,
             winding_dir: ArcDir,
+            already_cut: Polygon = None,
             generate: bool = False,
             voronoi: Optional[VoronoiCenters] = None,
+            starting_point_tactic: StartPointTactic = StartPointTactic.WIDEST,
             starting_point: Point = None,
             debug=False,
     ) -> None:
+        if already_cut is None:
+            already_cut = Polygon()
+
         polygons = already_cut
         polygons = polygons.union(to_cut)
 
         self.starting_cut_area = already_cut
 
         if voronoi is None:
-            if starting_point:
+            if starting_point is not None:
                 voronoi = VoronoiCenters(polygons, starting_point=starting_point)
-            else:
-                voronoi = VoronoiCenters(polygons, preserve_widest=True)
-                if not voronoi.start_point.within(already_cut.buffer(-step / 2)):
-                    # Start point outside cut area.
-                    # Generate a voronoi diagram of just the cut area and take the
-                    # start point from that.
-                    cut_voronoi = VoronoiCenters(already_cut, preserve_widest=True)
-                    voronoi = VoronoiCenters(polygons, starting_point=cut_voronoi.start_point)
-                    del cut_voronoi
+            elif starting_point_tactic == StartPointTactic.WIDEST:
+                voronoi = self._start_point_widest(to_cut, already_cut, step)
+            elif starting_point_tactic == StartPointTactic.PERIMITER:
+                voronoi = self._start_point_perimiter(to_cut, already_cut)
 
         clean_polygon: Polygon = voronoi.polygon  # Remove duplicate points.
         super().__init__(clean_polygon, step, winding_dir, generate, voronoi, debug)
@@ -1144,59 +1112,30 @@ class RefineInnerPocket(BasePocket):
         self.cut_area_total2 = self.starting_cut_area.union(
                 Polygon(self.last_circle.path).buffer(self.step / 2))
 
-
-class RefineOuter(BasePocket):
-    """
-    Calculate outside HSM path unconstrained outside.
-    """
-    starting_cut_area: Polygon
-
-    def __init__(
-            self,
-            to_cut: Union[Polygon, MultiPolygon],
-            already_cut: Polygon,
-            step: float,
-            winding_dir: ArcDir,
-            generate: bool = False,
-            voronoi: Optional[VoronoiCenters] = None,
-            starting_point: Point = None,
-            debug=False,
-    ) -> None:
-        if to_cut.type != "MultiPolygon":
-            to_cut = MultiPolygon([to_cut])
-
-        polygons = Polygon(already_cut.exterior)
-        for p in to_cut.geoms:
-            polygons = polygons.difference(Polygon(p))
-
-        self.starting_cut_area = already_cut
-        self.cut_area_total = already_cut
-        self.cut_area_total2 = already_cut
-
-        if voronoi is None:
-            if starting_point:
-                voronoi = VoronoiCenters(polygons, starting_point=starting_point)
-                self.start_point = voronoi.start_point
-                self.start_radius = voronoi.start_distance
-            else:
-                voronoi = VoronoiCenters(polygons, preserve_edge=True)
-                self.start_point, self.start_radius = self._calculate_start_point(
-                        voronoi, already_cut)
-
-        self.last_circle: Optional[ArcData] = create_circle(
-            self.start_point, self.start_radius or 1)
-
-        super().__init__(polygons, step, winding_dir, generate, voronoi, debug)
+    @staticmethod
+    def _start_point_widest(
+            to_cut: MultiPolygon, already_cut: Polygon, step: float) -> VoronoiCenters:
+        """
+        """
+        voronoi = VoronoiCenters(to_cut, preserve_widest=True)
+        if already_cut and not voronoi.start_point.within(already_cut.buffer(-step / 2)):
+            # Start point outside cut area.
+            # Generate a voronoi diagram of just the cut area and take the
+            # start point from that.
+            cut_voronoi = VoronoiCenters(already_cut, preserve_widest=True)
+            voronoi = VoronoiCenters(to_cut, starting_point=cut_voronoi.start_point)
+            del cut_voronoi
+        return voronoi
 
     @staticmethod
-    def _calculate_start_point(
-            voronoi: VoronoiCenters,
-            already_cut: Polygon) -> Tuple[Point, float]:
+    def _start_point_perimiter(to_cut: MultiPolygon, already_cut: Polygon) -> VoronoiCenters:
         """
         Recalculate the start point half way between the one currently set on the
         outer perimeter of the already_cut and the inner perimeter of the
         already_cut.
         """
+        voronoi = VoronoiCenters(to_cut, preserve_edge=True)
+
         perimiter_point = voronoi.start_point
         assert perimiter_point is not None
         voronoi_edge_index = voronoi.vertex_to_edges[perimiter_point.coords[0]]
@@ -1206,5 +1145,10 @@ class RefineOuter(BasePocket):
         new_start_point = Point(round_coord(
             edge_section.interpolate(0.5, normalized=True).coords[0]))
         voronoi.set_starting_point(new_start_point)
-        return new_start_point, edge_section.length / 2
+
+        return voronoi
+
+
+class InsidePocket(Pocket):
+    pass
 

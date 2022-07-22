@@ -83,36 +83,42 @@ def generate_tool_path(shapes, step_size, inner=True):
     """ Calculate the toolpath. """
 
     if inner:
-        previous_cut = shapes.geoms[0].buffer(-6)
-        #previous_cut = previous_cut.difference(Point(-20.93476, 0).buffer(1))
+        #already_cut = Polygon()
+        already_cut = shapes.geoms[0].buffer(-6)
+        #already_cut = already_cut.difference(Point(-20.93476, 0).buffer(1))
 
-        toolpath = geometry.RefineInnerPocket(
+        toolpath = geometry.Pocket(
                 shapes,
-                previous_cut,
                 step_size,
                 geometry.ArcDir.Closest,
+                already_cut=already_cut,
                 generate=True,
+                #starting_point=Point(0, -28),
                # starting_point=Point(-23, 20),
                 #starting_point=Point(-23, 0),
                 #starting_point=Point(-20.93476, 0),
                 debug=True)
     else:
-        previous_cut = Polygon()
+        already_cut = Polygon()
+        all_pockets = MultiPolygon()
         for shape in shapes.geoms:
-            shape_poly = Polygon(shape.exterior)
-            previous_cut = previous_cut.union(
-                    shape_poly.buffer(5).difference(shape_poly.buffer(3)))
+            filled_shape = Polygon(shape.exterior)
+            desired_pocket = Polygon(filled_shape.exterior).buffer(5).difference(filled_shape)
+            cut = desired_pocket.difference(filled_shape.buffer(2))
+            already_cut = already_cut.union(cut)
+            all_pockets = all_pockets.union(desired_pocket)
 
-        toolpath = geometry.RefineOuter(
-                shapes,
-                previous_cut,
+        toolpath = geometry.Pocket(
+                all_pockets,
                 step_size,
                 geometry.ArcDir.Closest,
-                #starting_point=Point(44, 0),
+                already_cut=already_cut,
                 generate=True,
+                starting_point_tactic = geometry.StartPointTactic.PERIMITER,
+                #starting_point=Point(0, 42.5),
                 debug=True)
 
-    display_outline(previous_cut)
+    display_outline(already_cut)
 
     timeslice = 100  # ms
     for index, progress in enumerate(toolpath.get_arcs(timeslice)):
@@ -149,13 +155,13 @@ def main(argv):
     modelspace = dxf_data.modelspace()
     shapes = dxf.dxf_to_polygon(modelspace)
 
-    #toolpath = generate_tool_path(shapes, step_size, inner=False)
     toolpath = generate_tool_path(shapes, step_size, inner=True)
+    #toolpath = generate_tool_path(shapes, step_size, inner=False)
 
     display_outline(shapes)
     display_toolpath(toolpath)
-    display_voronoi(toolpath)
-    # display_visited_voronoi_edges(toolpath)
+    #display_voronoi(toolpath)
+    #display_visited_voronoi_edges(toolpath)
     display_start_point(toolpath)
 
     plt.gca().set_aspect('equal')

@@ -188,7 +188,7 @@ class VoronoiCenters:
 
         if starting_point is not None:
             # Set the starting point.
-            self.start_point, self.start_distance = self.set_starting_point(starting_point)
+            self.set_starting_point(starting_point)
             preserve.append(self.start_point.coords[0])
 
         self._split_on_pocket_edge()
@@ -504,7 +504,7 @@ class VoronoiCenters:
                 closest = Point(vertex)
         return closest
 
-    def set_starting_point(self, point: Point) -> Tuple[Point, float]:
+    def set_starting_point(self, point: Point) -> None:
         """
         Set a starting point within the polygon from which to start iterating over
         the voronoi diagram.
@@ -516,7 +516,9 @@ class VoronoiCenters:
 
         if point.coords[0] in self.vertex_to_edges:
             # point already exists on voronoi diagram. Nothing to do.
-            return point, self.distance_from_geom(point)
+            self.start_point = point
+            self.start_distance = self.distance_from_geom(point)
+            return
 
         # Find closest voronoi edge to point but only across self.polygon.
         # Closest distances that go outside self.polygon are not valid.
@@ -552,12 +554,16 @@ class VoronoiCenters:
         # New vertex 
         if new_edge.length == 0:
             assert point.equals(Point(new_vertex))
-            return Point(new_vertex), self.distance_from_geom(Point(new_vertex))
+            self.start_point = Point(new_vertex)
+            self.start_distance = self.distance_from_geom(Point(new_vertex))
+            return
 
         # Add a new edge to the voronoi graph.
         # This will home the new starting point.
         assert not point.equals(Point(new_vertex))
         self._store_edge(new_edge)
-        return point, self.distance_from_geom(point)
+        self.start_point = point
+        self.start_distance = self.distance_from_geom(point)
+        return
 
 

@@ -153,7 +153,7 @@ def display_toolpath(toolpath, cut_colour="green", rapid_inside_colour="blue", r
 
 def generate_tool_path(shape, step_size):
     """ Calculate the toolpath. """
-    toolpath = geometry.InsidePocket(
+    toolpath = geometry.Pocket(
             shape,
             step_size,
             geometry.ArcDir.Closest,
