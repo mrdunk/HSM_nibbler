@@ -45,8 +45,8 @@ def round_coord(value: Tuple[float, float], dp: int = ROUND_DP) -> Tuple[float, 
 
 
 class VoronoiCenters:
-    start_point: Optional[Point] = None
-    start_distance: Optional[float] = None
+    #start_point: Optional[Point] = None
+    #start_distance: Optional[float] = None
 
     def __init__(
             self,
@@ -514,46 +514,50 @@ class VoronoiCenters:
         if not point.within(self.polygon):
             raise PointOutsidePart(f"{point} not inside geometry")
 
+        if point.coords[0] in self.vertex_to_edges:
+            # point already exists on voronoi diagram. Nothing to do.
+            return point, self.distance_from_geom(point)
+
+        # Find closest voronoi edge to point but only across self.polygon.
+        # Closest distances that go outside self.polygon are not valid.
         closest_edge = None
-        closest_index = None
+        closest_edge_index = None
         closest_dist = None
+        new_vertex = None
+        new_edge = None
         for edge_index, edge in self.edges.items():
-            dist = point.distance(edge)
+            dist = edge.distance(point)
             proposed_new_vertex = round_coord(nearest_points(edge, point)[0].coords[0])
             proposed_new_edge = LineString([point, proposed_new_vertex])
             if closest_dist is None or dist < closest_dist:
-                if proposed_new_edge.within(self.polygon):
+                if proposed_new_edge.within(self.polygon) or proposed_new_edge.length == 0:
                     closest_dist = dist
-                    closest_index = edge_index
+                    closest_edge_index = edge_index
                     closest_edge = edge
+                    new_vertex = proposed_new_vertex
+                    new_edge = proposed_new_edge
+      
+        assert closest_edge_index is not None
 
-        # Add a new vertex on the voronoi graph.
-        new_vertex = round_coord(nearest_points(closest_edge, point)[0].coords[0])
+        # Add the new vertex on the voronoi graph.
+        v1, v2 = self.edge_to_vertex[closest_edge_index]
+        new_edge_1 = LineString([v1, new_vertex])
+        new_edge_2 = LineString([v2, new_vertex])
+        assert new_edge_1.length > 0
+        assert new_edge_2.length > 0
+        self._remove_edge(closest_edge_index)
+        self._store_edge(new_edge_1)
+        self._store_edge(new_edge_2)
 
-        if new_vertex not in self.vertex_to_edges:
-            assert closest_index is not None
-
-            v1, v2 = self.edge_to_vertex[closest_index]
-            new_edge_1 = LineString([v1, new_vertex])
-            new_edge_2 = LineString([v2, new_vertex])
-
-            assert new_edge_1.length > 0
-            assert new_edge_2.length > 0
-
-            self._remove_edge(closest_index)
-            
-            self._store_edge(new_edge_1)
-            self._store_edge(new_edge_2)
+        # New vertex 
+        if new_edge.length == 0:
+            assert point.equals(Point(new_vertex))
+            return Point(new_vertex), self.distance_from_geom(Point(new_vertex))
 
         # Add a new edge to the voronoi graph.
         # This will home the new starting point.
-        new_edge_3 = LineString([point, new_vertex])
-
-        if new_edge_3.length == 0:
-            return Point(new_vertex), self.distance_from_geom(Point(new_vertex))
-
-        self._store_edge(new_edge_3)
-
+        assert not point.equals(Point(new_vertex))
+        self._store_edge(new_edge)
         return point, self.distance_from_geom(point)
 
 

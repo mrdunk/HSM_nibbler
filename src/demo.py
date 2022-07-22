@@ -158,7 +158,7 @@ def generate_tool_path(shape, step_size):
             step_size,
             geometry.ArcDir.Closest,
             generate=True,
-            starting_point=Point(10, 11.8),
+            starting_point=Point(-39.9, 11.8),
             debug=True)
     #toolpath = geometry.InsidePocket(
     #        shape, step_size, geometry.ArcDir.CW, generate=True, debug=True)
