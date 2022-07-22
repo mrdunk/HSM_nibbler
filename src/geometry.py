@@ -319,7 +319,7 @@ class BasePocket:
             for ring in [poly.exterior] + list(poly.interiors):
                 self.dilated_polygon_boundaries.append(ring.buffer(JITTER_FILTER))
 
-        #self.last_arc: Optional[ArcData] = None
+        self.last_arc: Optional[ArcData] = None
 
     def calculate_path(self) -> None:
         """ Reset path and restart from beginning. """
@@ -1100,8 +1100,8 @@ class RefineInnerPocket(BasePocket):
 
     def __init__(
             self,
-            polygon: Polygon,
-            cleared_polygon: Polygon,
+            to_cut: Polygon,
+            already_cut: Polygon,
             step: float,
             winding_dir: ArcDir,
             generate: bool = False,
@@ -1109,21 +1109,21 @@ class RefineInnerPocket(BasePocket):
             starting_point: Point = None,
             debug=False,
     ) -> None:
-        polygons = cleared_polygon
-        polygons = polygons.union(polygon)
+        polygons = already_cut
+        polygons = polygons.union(to_cut)
 
-        self.starting_cut_area = cleared_polygon
+        self.starting_cut_area = already_cut
 
         if voronoi is None:
             if starting_point:
                 voronoi = VoronoiCenters(polygons, starting_point=starting_point)
             else:
                 voronoi = VoronoiCenters(polygons, preserve_widest=True)
-                if not voronoi.start_point.within(cleared_polygon.buffer(-step / 2)):
+                if not voronoi.start_point.within(already_cut.buffer(-step / 2)):
                     # Start point outside cut area.
                     # Generate a voronoi diagram of just the cut area and take the
                     # start point from that.
-                    cut_voronoi = VoronoiCenters(cleared_polygon, preserve_widest=True)
+                    cut_voronoi = VoronoiCenters(already_cut, preserve_widest=True)
                     voronoi = VoronoiCenters(polygons, starting_point=cut_voronoi.start_point)
                     del cut_voronoi
 
@@ -1153,8 +1153,8 @@ class RefineOuter(BasePocket):
 
     def __init__(
             self,
-            polygon: Union[Polygon, MultiPolygon],
-            cleared_polygon: Polygon,
+            to_cut: Union[Polygon, MultiPolygon],
+            already_cut: Polygon,
             step: float,
             winding_dir: ArcDir,
             generate: bool = False,
@@ -1162,16 +1162,16 @@ class RefineOuter(BasePocket):
             starting_point: Point = None,
             debug=False,
     ) -> None:
-        if polygon.type != "MultiPolygon":
-            polygon = MultiPolygon([polygon])
+        if to_cut.type != "MultiPolygon":
+            to_cut = MultiPolygon([to_cut])
 
-        polygons = Polygon(cleared_polygon.exterior)
-        for p in polygon.geoms:
+        polygons = Polygon(already_cut.exterior)
+        for p in to_cut.geoms:
             polygons = polygons.difference(Polygon(p))
 
-        self.starting_cut_area = cleared_polygon
-        self.cut_area_total = cleared_polygon
-        self.cut_area_total2 = cleared_polygon
+        self.starting_cut_area = already_cut
+        self.cut_area_total = already_cut
+        self.cut_area_total2 = already_cut
 
         if voronoi is None:
             if starting_point:
@@ -1181,7 +1181,7 @@ class RefineOuter(BasePocket):
             else:
                 voronoi = VoronoiCenters(polygons, preserve_edge=True)
                 self.start_point, self.start_radius = self._calculate_start_point(
-                        voronoi, cleared_polygon)
+                        voronoi, already_cut)
 
         self.last_circle: Optional[ArcData] = create_circle(
             self.start_point, self.start_radius or 1)
@@ -1191,18 +1191,18 @@ class RefineOuter(BasePocket):
     @staticmethod
     def _calculate_start_point(
             voronoi: VoronoiCenters,
-            cleared_polygon: Polygon) -> Tuple[Point, float]:
+            already_cut: Polygon) -> Tuple[Point, float]:
         """
         Recalculate the start point half way between the one currently set on the
-        outer perimeter of the cleared_polygon and the inner perimeter of the
-        cleared_polygon.
+        outer perimeter of the already_cut and the inner perimeter of the
+        already_cut.
         """
         perimiter_point = voronoi.start_point
         assert perimiter_point is not None
         voronoi_edge_index = voronoi.vertex_to_edges[perimiter_point.coords[0]]
         assert len(voronoi_edge_index) == 1
         voronoi_edge = voronoi.edges[voronoi_edge_index[0]]
-        edge_section = cleared_polygon.intersection(voronoi_edge)
+        edge_section = already_cut.intersection(voronoi_edge)
         new_start_point = Point(round_coord(
             edge_section.interpolate(0.5, normalized=True).coords[0]))
         voronoi.set_starting_point(new_start_point)
