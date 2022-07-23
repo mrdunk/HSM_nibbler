@@ -760,7 +760,8 @@ class BasePocket:
         assert self.last_arc
         lines = []
         path = LineString([self.last_arc.end, next_arc.start])
-        inside_pocket = path.covered_by(self.polygon.buffer(self.step / 20))
+        inside_pocket = (path.covered_by(self.polygon.buffer(self.step / 20))
+                or path.covered_by(self.cut_area_total2))
 
         if inside_pocket:
             # Whole path is inside pocket.
