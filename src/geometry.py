@@ -952,43 +952,6 @@ class BasePocket:
         return arc
 
 
-class InsidePocket_OLD(BasePocket):
-    def __init__(
-            self,
-            polygon: Polygon,
-            step: float,
-            winding_dir: ArcDir,
-            generate: bool = False,
-            voronoi: Optional[VoronoiCenters] = None,
-            starting_point: Point = None,
-            debug=False,
-    ) -> None:
-        self.starting_point = starting_point
-
-        if voronoi is None:
-            if starting_point:
-                voronoi = VoronoiCenters(polygon, starting_point=starting_point)
-            else:
-                voronoi = VoronoiCenters(polygon, preserve_widest=True)
-
-        clean_polygon: Polygon = voronoi.polygon  # Remove duplicate points.
-
-        super().__init__(clean_polygon, step, winding_dir, generate, voronoi, debug)
-
-    def _reset(self) -> None:
-        super()._reset()
-
-        self.start_point: Point
-        self.start_radius: float
-        self.start_point = self.voronoi.start_point
-        self.start_radius = self.voronoi.start_distance or 0
-
-        # Assume starting circle is already cut.
-        self.last_circle: Optional[ArcData] = create_circle(
-            self.start_point, self.start_radius)
-        self.cut_area_total = Polygon(self.last_circle.path)
-        self.cut_area_total2 = Polygon(self.last_circle.path).buffer(self.step / 2)
-
 class OutsidePocket(BasePocket):
     def __init__(
             self,

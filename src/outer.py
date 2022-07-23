@@ -72,11 +72,9 @@ def main(argv):
 
     # Generate tool path.
     #toolpath = geometry.OutsidePocket(shapes, material, step_size, geometry.ArcDir.CW, generate=True)
-    #toolpath = geometry.OutsidePocket(shapes, material, step_size, geometry.ArcDir.Closest, generate=True)
+    toolpath = geometry.OutsidePocket(shapes, material, step_size, geometry.ArcDir.Closest, generate=True)
     #toolpath = geometry.OutsidePocketSimple(shapes[0], step_size, geometry.ArcDir.CW, generate=True)
     #toolpath = geometry.OutsidePocketSimple(shapes[0], step_size, geometry.ArcDir.Closest, generate=True)
-    toolpath = geometry.OuterPeel(
-            shapes, step_size, geometry.ArcDir.Closest, generate=True, debug=True)
 
 
     # Display shape to be cut
