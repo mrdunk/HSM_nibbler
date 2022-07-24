@@ -14,6 +14,32 @@ import dxf
 import geometry
 
 
+def display_outline(shape, colour="blue"):
+    """ Display the outline of the shape to be cut. """
+    shapes = shape
+    if shapes.type != "MultiPolygon":
+        shapes = MultiPolygon([shapes])
+
+    for shape in shapes.geoms:
+        x, y = shape.exterior.xy
+        plt.plot(x, y, c=colour, linewidth=2)
+
+        for interior in shape.interiors:
+            x, y = interior.xy
+            plt.plot(x, y, c=colour, linewidth=2)
+
+def display_voronoi(toolpath, colour="red"):
+    """ Display the voronoi edges. These are equidistant from the shape's edges. """
+    for edge in toolpath.voronoi.edges.values():
+        x = []
+        y = []
+        for point in edge.coords:
+            x.append(point[0])
+            y.append(point[1])
+        plt.plot(x, y, c="red", linewidth=4)
+        plt.plot(x[0], y[0], 'x', c=colour)
+        plt.plot(x[-1], y[-1], 'x', c=colour)
+
 def display_visited_voronoi_edges(toolpath, colour="black"):
     """ 
     Display the voronoi edges that were used to calculate cut geometry.
@@ -29,6 +55,29 @@ def display_visited_voronoi_edges(toolpath, colour="black"):
         plt.plot(x, y, c=colour, linewidth=1)
         plt.plot(x[0], y[0], 'x', c=colour)
         plt.plot(x[-1], y[-1], 'x', c=colour)
+
+def display_toolpath(toolpath, cut_colour="green", rapid_inside_colour="blue", rapid_outside_colour="orange"):
+    # Display path.
+    for element in toolpath.path:
+        if type(element).__name__ == "Arc":
+            x, y = element.path.xy
+            if element.debug:
+                plt.plot(x, y, c=element.debug, linewidth=3)
+            else:
+                plt.plot(x, y, c=cut_colour, linewidth=1)
+
+        elif type(element).__name__ == "Line":
+            x, y = element.path.xy
+            if element.move_style == geometry.MoveStyle.RAPID_INSIDE:
+                plt.plot(x, y, linestyle='--', c=rapid_inside_colour, linewidth=1)
+            elif element.move_style == geometry.MoveStyle.RAPID_OUTSIDE:
+                plt.plot(x, y, c=rapid_outside_colour, linewidth=1)
+            else:
+                assert element.move_style == geometry.MoveStyle.CUT
+                plt.plot(x, y, linestyle='--', c=cut_colour, linewidth=1)
+
+def display_start_point(toolpath, colour="purple"):
+    plt.plot(toolpath.start_point.x, toolpath.start_point.y, marker='o', c=colour, markersize=10)
 
 def main(argv):
     """
@@ -60,94 +109,32 @@ def main(argv):
 
     shapes = dxf.dxf_to_polygon(modelspace)
 
-    #material = LineString([(-100, -100), (-100, 150), (200, 150), (200, -100)])
-    #material = LineString([(10, 10), (10, 200), (200, 200), (200, 10)])
-    material_bounds = shapes.buffer(4 * step_size).bounds
+    material_bounds = shapes.buffer(20 * step_size).bounds
     material = box(*material_bounds)
 
-    #material_bounds = shape.buffer(4 * step_size).bounds
-    #longest = max(abs(material_bounds[0] - material_bounds[2]),
-    #        abs(material_bounds[1] - material_bounds[3]))
-    #material = shape.centroid.buffer(2 * longest / 3).exterior
-
-    # Generate tool path.
-    #toolpath = geometry.OutsidePocket(shapes, material, step_size, geometry.ArcDir.CW, generate=True)
-    toolpath = geometry.OutsidePocket(shapes, material, step_size, geometry.ArcDir.Closest, generate=True)
-    #toolpath = geometry.OutsidePocketSimple(shapes[0], step_size, geometry.ArcDir.CW, generate=True)
-    #toolpath = geometry.OutsidePocketSimple(shapes[0], step_size, geometry.ArcDir.Closest, generate=True)
-
-
-    # Display shape to be cut
+    already_cut = material
     for shape in shapes.geoms:
-        x, y = toolpath.voronoi.polygon.exterior.xy
-        plt.plot(x, y, linestyle='--', c="blue", linewidth=2)
+        already_cut = already_cut.difference(Polygon(shape.exterior))
 
-        multi = toolpath.polygon
-        if multi.type != "MultiPolygon":
-            multi = MultiPolygon([multi])
-        for poly in multi.geoms:
-            x, y = poly.exterior.xy
-            #plt.plot(x, y, c="blue", linewidth=2)
+    toolpath = geometry.Pocket(
+            shapes,
+            step_size,
+            geometry.ArcDir.Closest,
+            already_cut=already_cut,
+            generate=True,
+            starting_point_tactic = geometry.StartPointTactic.PERIMITER,
+            debug=True)
 
-            for interior in poly.interiors:
-                x, y = interior.xy
-                #plt.plot(x, y, c="orange", linewidth=2)
-
-
-    # Draw arcs via generator.
     timeslice = 100  # ms
     for index, progress in enumerate(toolpath.get_arcs(timeslice)):
         print(index, progress)
-        #if index == 0:
-        #    break
+        # toolpath.path contains the currently generated path data at this point.
 
-        # You have access to toolpath.path here.
-        # Draw what's there so far; it will ot change position in the buffer.
-
-    # Call toolpath.calculate_path() to scrap the existing and regenerate toolpath.
-
-    # Display voronoi edges.
-    for edge in toolpath.voronoi.edges.values():
-        x = []
-        y = []
-        for point in edge.coords:
-            x.append(point[0])
-            y.append(point[1])
-        plt.plot(x, y, c="red", linewidth=2)
-        plt.plot(x[0], y[0], 'x', c="red")
-        plt.plot(x[-1], y[-1], 'x', c="red")
-
-    # Starting circle.
-    #starting_circle = geometry.create_circle(toolpath.start_point, toolpath.start_radius).path
-    #x, y = starting_circle.xy
-    #plt.plot(x, y, c="orange", linewidth=1)
-
-    # Display path.
-    for element in toolpath.path:
-        if type(element).__name__ == "Arc":
-            x, y = element.path.xy
-            if element.debug:
-                plt.plot(x, y, c=element.debug, linewidth=3)
-            else:
-                plt.plot(x, y, c="green", linewidth=1)
-                pass
-            #plt.plot(element.origin.x, element.origin.y, "o")
-
-        elif type(element).__name__ == "Line":
-            x, y = element.path.xy
-            if element.move_style == geometry.MoveStyle.RAPID_INSIDE:
-                plt.plot(x, y, linestyle='--', c="blue", linewidth=1)
-                pass
-            elif element.move_style == geometry.MoveStyle.RAPID_OUTSIDE:
-                plt.plot(x, y, c="orange", linewidth=1)
-                pass
-            else:
-                assert element.move_style == geometry.MoveStyle.CUT
-                plt.plot(x, y, linestyle='--', c="green", linewidth=1)
-
-    plt.plot(toolpath.start_point.x, toolpath.start_point.y, 'o', c="black")
-
+    #display_outline(shapes)
+    display_toolpath(toolpath)
+    display_voronoi(toolpath)
     # display_visited_voronoi_edges(toolpath)
+    display_start_point(toolpath)
 
     plt.gca().set_aspect('equal')
     plt.show()

@@ -22,7 +22,7 @@ except ImportError:
     from cam.helpers import log  # type: ignore
 
 # Filter arcs that are entirely within this distance of a pocket edge.
-JITTER_FILTER = 0.02
+SKIP_EDGE_ARCS = 1 / 20
 
 # Number of tries before we give up trying to find a best-fit arc and just go
 # with the best we have found so far.
@@ -268,8 +268,9 @@ class BasePocket:
     A CAM library to generate a HSM "peeling" pocketing toolpath.
     """
 
-    cut_area_total: Polygon
-    cut_area_total2: Polygon
+    # TODO: We shouldn't need both of these.
+    cut_area_total: Polygon   # Cut area so far, calculated by appending full circles.
+    cut_area_total2: Polygon  # Cut area so far, calculated by appending arc circles.
     last_arc: Optional[ArcData]
     last_circle: Optional[ArcData]
     start_point: Point
@@ -321,7 +322,8 @@ class BasePocket:
             multi = MultiPolygon([multi])
         for poly in multi.geoms:
             for ring in [poly.exterior] + list(poly.interiors):
-                self.dilated_polygon_boundaries.append(ring.buffer(JITTER_FILTER))
+                self.dilated_polygon_boundaries.append(
+                        ring.buffer(self.step * SKIP_EDGE_ARCS))
 
         self.last_arc: Optional[ArcData] = None
 
@@ -760,8 +762,18 @@ class BasePocket:
         assert self.last_arc
         lines = []
         path = LineString([self.last_arc.end, next_arc.start])
+
+        # If we enter this loop it implies the joining path between 2 arcs from the
+        # same pocket has cut across material that probably shouldn't have been cut.
+        # If we are getting unnecessary RAPID_OUTSIDE moves when joining arcs this
+        # is probably related.
+        #if (Point(self.last_arc.end).covered_by(self.polygon.buffer(self.step / 20)) and
+        #        Point(next_arc.start).covered_by(self.polygon.buffer(self.step / 20)) and
+        #        not path.covered_by(self.polygon.buffer(self.step / 20))):
+        #    print("Unnecessary RAPID_OUTSIDE.", self.last_arc.end, next_arc.start)
+
         inside_pocket = (path.covered_by(self.polygon.buffer(self.step / 20))
-                or path.covered_by(self.cut_area_total2))
+                or path.covered_by(self.cut_area_total2.buffer(self.step / 20)))
 
         if inside_pocket:
             # Whole path is inside pocket.
@@ -1055,9 +1067,9 @@ class Pocket(BasePocket):
             if starting_point is not None:
                 voronoi = VoronoiCenters(polygons, starting_point=starting_point)
             elif starting_point_tactic == StartPointTactic.WIDEST:
-                voronoi = self._start_point_widest(to_cut, already_cut, step)
+                voronoi = self._start_point_widest(polygons, already_cut, step)
             elif starting_point_tactic == StartPointTactic.PERIMITER:
-                voronoi = self._start_point_perimiter(to_cut, already_cut)
+                voronoi = self._start_point_perimiter(polygons, already_cut)
 
         clean_polygon: Polygon = voronoi.polygon  # Remove duplicate points.
         super().__init__(clean_polygon, step, winding_dir, generate, voronoi, debug)
@@ -1078,27 +1090,27 @@ class Pocket(BasePocket):
 
     @staticmethod
     def _start_point_widest(
-            to_cut: MultiPolygon, already_cut: Polygon, step: float) -> VoronoiCenters:
+            polygons: MultiPolygon, already_cut: Polygon, step: float) -> VoronoiCenters:
         """
         """
-        voronoi = VoronoiCenters(to_cut, preserve_widest=True)
+        voronoi = VoronoiCenters(polygons, preserve_widest=True)
         if already_cut and not voronoi.start_point.within(already_cut.buffer(-step / 2)):
             # Start point outside cut area.
             # Generate a voronoi diagram of just the cut area and take the
             # start point from that.
             cut_voronoi = VoronoiCenters(already_cut, preserve_widest=True)
-            voronoi = VoronoiCenters(to_cut, starting_point=cut_voronoi.start_point)
+            voronoi = VoronoiCenters(polygons, starting_point=cut_voronoi.start_point)
             del cut_voronoi
         return voronoi
 
     @staticmethod
-    def _start_point_perimiter(to_cut: MultiPolygon, already_cut: Polygon) -> VoronoiCenters:
+    def _start_point_perimiter(polygons: MultiPolygon, already_cut: Polygon) -> VoronoiCenters:
         """
         Recalculate the start point half way between the one currently set on the
         outer perimeter of the already_cut and the inner perimeter of the
         already_cut.
         """
-        voronoi = VoronoiCenters(to_cut, preserve_edge=True)
+        voronoi = VoronoiCenters(polygons, preserve_edge=True)
 
         perimiter_point = voronoi.start_point
         assert perimiter_point is not None

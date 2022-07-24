@@ -155,8 +155,8 @@ def main(argv):
     modelspace = dxf_data.modelspace()
     shapes = dxf.dxf_to_polygon(modelspace)
 
-    toolpath = generate_tool_path(shapes, step_size, inner=True)
-    #toolpath = generate_tool_path(shapes, step_size, inner=False)
+    #toolpath = generate_tool_path(shapes, step_size, inner=True)
+    toolpath = generate_tool_path(shapes, step_size, inner=False)
 
     display_outline(shapes)
     display_toolpath(toolpath)
