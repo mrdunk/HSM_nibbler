@@ -268,9 +268,12 @@ class BasePocket:
     A CAM library to generate a HSM "peeling" pocketing toolpath.
     """
 
-    # TODO: We shouldn't need both of these.
-    cut_area_total: Polygon   # Cut area so far, calculated by appending full circles.
-    cut_area_total2: Polygon  # Cut area so far, calculated by appending arc circles.
+    # TODO: Can we get by with only cut_area_total2?
+    # Cut area so far, calculated by appending full circles.
+    cut_area_total: Polygon
+    # Cut area so far, calculated by appending arc segments, dilated by (step / 2).
+    cut_area_total2: Polygon
+
     last_arc: Optional[ArcData]
     last_circle: Optional[ArcData]
     start_point: Point
@@ -772,11 +775,11 @@ class BasePocket:
         #        not path.covered_by(self.polygon.buffer(self.step / 20))):
         #    print("Unnecessary RAPID_OUTSIDE.", self.last_arc.end, next_arc.start)
 
-        inside_pocket = (path.covered_by(self.polygon.buffer(self.step / 20))
-                or path.covered_by(self.cut_area_total2.buffer(self.step / 20)))
+        inside_pocket = path.covered_by(self.polygon.buffer(self.step / 20))
+        inside_pocket = inside_pocket or path.covered_by(self.cut_area_total2.buffer(-self.step / 2).buffer(self.step / 20))
 
         if inside_pocket:
-            # Whole path is inside pocket.
+            # Whole path is inside pocket and is already cut.
             not_cut_path_area = (path.buffer(self.step / 2).
                     difference(self.cut_area_total2).buffer(-self.step / 20).
                     buffer(self.step / 2))
@@ -804,7 +807,7 @@ class BasePocket:
                     lines[-1].path,
                     lines[-1].move_style)
         else:
-            # Path is not entirely inside pocket.
+            # Path is not entirely inside pocket or crosses uncut area.
             move_style = MoveStyle.RAPID_OUTSIDE
             lines.append(LineData(self.last_arc.end, next_arc.start, path, move_style))
 
