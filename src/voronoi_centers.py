@@ -545,11 +545,11 @@ class VoronoiCenters:
         v1, v2 = self.edge_to_vertex[closest_edge_index]
         new_edge_1 = LineString([v1, new_vertex])
         new_edge_2 = LineString([v2, new_vertex])
-        assert new_edge_1.length > 0
-        assert new_edge_2.length > 0
         self._remove_edge(closest_edge_index)
-        self._store_edge(new_edge_1)
-        self._store_edge(new_edge_2)
+        if new_edge_1.length > 0:
+            self._store_edge(new_edge_1)
+        if new_edge_2.length > 0:
+            self._store_edge(new_edge_2)
 
         # New vertex 
         if new_edge.length == 0:

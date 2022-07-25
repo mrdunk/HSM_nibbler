@@ -775,8 +775,11 @@ class BasePocket:
         #        not path.covered_by(self.polygon.buffer(self.step / 20))):
         #    print("Unnecessary RAPID_OUTSIDE.", self.last_arc.end, next_arc.start)
 
-        inside_pocket = path.covered_by(self.polygon.buffer(self.step / 20))
-        inside_pocket = inside_pocket or path.covered_by(self.cut_area_total2.buffer(-self.step / 2).buffer(self.step / 20))
+        cut_area = self.cut_area_total2.buffer(-self.step / 2).buffer(self.step / 20)
+        inside_pocket = (
+                path.covered_by(self.polygon.buffer(self.step / 20))
+                or path.covered_by(cut_area)
+                )
 
         if inside_pocket:
             # Whole path is inside pocket and is already cut.
@@ -1123,9 +1126,8 @@ class Pocket(BasePocket):
         edge_section = already_cut.intersection(voronoi_edge)
         new_start_point = Point(round_coord(
             edge_section.interpolate(0.5, normalized=True).coords[0]))
-        voronoi.set_starting_point(new_start_point)
 
-        return voronoi
+        return VoronoiCenters(polygons, starting_point=new_start_point)
 
 
 class InsidePocket(Pocket):
