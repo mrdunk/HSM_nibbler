@@ -122,7 +122,7 @@ def main(argv):
             geometry.ArcDir.Closest,
             already_cut=already_cut,
             generate=True,
-            starting_point_tactic = geometry.StartPointTactic.PERIMITER,
+            starting_point_tactic = geometry.StartPointTactic.PERIMETER,
             debug=True)
 
     timeslice = 100  # ms

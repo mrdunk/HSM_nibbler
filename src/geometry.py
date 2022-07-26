@@ -57,8 +57,10 @@ class MoveStyle(Enum):
     CUT = 2
 
 class StartPointTactic:
-    PERIMITER = 0  # Starting point hint for outer pockets.
+    PERIMETER = 0  # Starting point hint for outer peel. On the outer perimeter.
+    PERIMITER = 0  # Tyop. TODO: remove.
     WIDEST = 1     # Starting point hint for inner pockets.
+    MID_CUT = 2    # Starting point hint for outer pockets. Mid point on cut area.
 
 
 ArcData = NamedTuple("Arc", [
@@ -1074,8 +1076,10 @@ class Pocket(BasePocket):
                 voronoi = VoronoiCenters(polygons, starting_point=starting_point)
             elif starting_point_tactic == StartPointTactic.WIDEST:
                 voronoi = self._start_point_widest(polygons, already_cut, step)
-            elif starting_point_tactic == StartPointTactic.PERIMITER:
-                voronoi = self._start_point_perimiter(polygons, already_cut)
+            elif starting_point_tactic == StartPointTactic.PERIMETER:
+                voronoi = self._start_point_perimeter(polygons, already_cut, step)
+            elif starting_point_tactic == StartPointTactic.MID_CUT:
+                voronoi = self._start_point_mid_cut(polygons, already_cut)
 
         clean_polygon: Polygon = voronoi.polygon  # Remove duplicate points.
         super().__init__(clean_polygon, step, winding_dir, generate, voronoi, debug)
@@ -1110,7 +1114,30 @@ class Pocket(BasePocket):
         return voronoi
 
     @staticmethod
-    def _start_point_perimiter(polygons: MultiPolygon, already_cut: Polygon) -> VoronoiCenters:
+    def _start_point_perimeter(
+            polygons: MultiPolygon, already_cut: Polygon, step: float) -> VoronoiCenters:
+        """
+        Recalculate the start point to be just inside the cut area, adjacent to the perimeter.
+        """
+        voronoi = VoronoiCenters(polygons, preserve_edge=True)
+
+        perimiter_point = voronoi.start_point
+        assert perimiter_point is not None
+        voronoi_edge_index = voronoi.vertex_to_edges[perimiter_point.coords[0]]
+        assert len(voronoi_edge_index) == 1
+        voronoi_edge = voronoi.edges[voronoi_edge_index[0]]
+        edge_section = already_cut.intersection(voronoi_edge)
+        if edge_section.length > step * 2:
+            new_start_point = Point(round_coord(
+                edge_section.interpolate(step).coords[0]))
+        else:
+            new_start_point = Point(round_coord(
+                edge_section.interpolate(0.5, normalized=True).coords[0]))
+
+        return VoronoiCenters(polygons, starting_point=new_start_point)
+
+    @staticmethod
+    def _start_point_mid_cut(polygons: MultiPolygon, already_cut: Polygon) -> VoronoiCenters:
         """
         Recalculate the start point half way between the one currently set on the
         outer perimeter of the already_cut and the inner perimeter of the
