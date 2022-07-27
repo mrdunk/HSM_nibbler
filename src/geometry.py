@@ -329,6 +329,7 @@ class BasePocket:
             for ring in [poly.exterior] + list(poly.interiors):
                 self.dilated_polygon_boundaries.append(
                         ring.buffer(self.step * SKIP_EDGE_ARCS))
+        self.dilated_polygon = self.polygon.buffer(self.step / 20)
 
         self.last_arc: Optional[ArcData] = None
 
@@ -752,7 +753,7 @@ class BasePocket:
             if self.last_arc is not None:
                 self.path += self.join_arcs(arc)
             self.path.append(arc)
-            # This union takes up ~25% of processing time of the whole algorithm.
+            # This union takes up ~5% of processing time of the whole algorithm.
             # TODO: Only truncated arcs really need the whole check in 'join_arcs(...)'.
             # We could tag arcs that need the detailed check and use shapely's
             # unary_union(...) here for the others.
@@ -767,34 +768,24 @@ class BasePocket:
         assert self.last_arc
         lines = []
         path = LineString([self.last_arc.end, next_arc.start])
+        dilation = (self.step / 2) - (self.step / 20)
 
-        # If we enter this loop it implies the joining path between 2 arcs from the
-        # same pocket has cut across material that probably shouldn't have been cut.
-        # If we are getting unnecessary RAPID_OUTSIDE moves when joining arcs this
-        # is probably related.
-        #if (Point(self.last_arc.end).covered_by(self.polygon.buffer(self.step / 20)) and
-        #        Point(next_arc.start).covered_by(self.polygon.buffer(self.step / 20)) and
-        #        not path.covered_by(self.polygon.buffer(self.step / 20))):
-        #    print("Unnecessary RAPID_OUTSIDE.", self.last_arc.end, next_arc.start)
-
-        cut_area = self.cut_area_total2.buffer(-self.step / 2).buffer(self.step / 20)
         inside_pocket = (
-                path.covered_by(self.polygon.buffer(self.step / 20))
-                or path.covered_by(cut_area)
+                path.covered_by(self.dilated_polygon)
+                or path.covered_by(self.cut_area_total2.buffer(-dilation))
                 )
 
         if inside_pocket:
             # Whole path is inside pocket and is already cut.
             not_cut_path_area = (path.buffer(self.step / 2).
-                    difference(self.cut_area_total2).buffer(-self.step / 20).
-                    buffer(self.step / 2))
-            not_cut_path = split(path, not_cut_path_area)
+                    difference(self.cut_area_total2).buffer(dilation))
+            split_path = split(path, not_cut_path_area)
 
-            for part in not_cut_path.geoms:
+            for part in split_path.geoms:
                 assert part.type == "LineString"
 
                 move_style = MoveStyle.RAPID_INSIDE
-                if part.intersects(not_cut_path_area.buffer(-0.01)):
+                if part.intersects(not_cut_path_area):
                     move_style = MoveStyle.CUT
 
                 lines.append(LineData(
