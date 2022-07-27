@@ -1217,5 +1217,3 @@ class EntryCircle:
         new_ark = create_arc(self.center, self.radius, 0, math.pi * 2 -0.001)
         self.arcs += arcs_from_circle_diff(new_ark, self.already_cut)
 
-
-
