@@ -56,7 +56,7 @@ class MoveStyle(Enum):
     RAPID_INSIDE = 1
     CUT = 2
 
-class StartPointTactic:
+class StartPointTactic(Enum):
     PERIMETER = 0  # Starting point hint for outer peel. On the outer perimeter.
     PERIMITER = 0  # Tyop. TODO: remove.
     WIDEST = 1     # Starting point hint for inner pockets.
@@ -229,11 +229,13 @@ def complete_arc(
 
 def arcs_from_circle_diff(
         circle: ArcData,
-        polygon: Polygon,
+        already_cut: Polygon,
         debug: str = None
         ) -> List[ArcData]:
-    """ Return any sections of circle that do not overlap polygon. """
-    line_diff = circle.path.difference(polygon)
+    """ Return any sections of circle that do not overlap already_cut. """
+    #if not already_cut:
+    #    return [circle]
+    line_diff = circle.path.difference(already_cut)
     if not line_diff:
         return []
     if line_diff.type == "MultiLineString":
@@ -280,7 +282,6 @@ class BasePocket:
     last_circle: Optional[ArcData]
     start_point: Point
     debug: bool = False
-    last_arc: Optional[ArcData] = None
 
     def __init__(
             self,
@@ -768,7 +769,7 @@ class BasePocket:
         lines = []
         path = LineString([self.last_arc.end, next_arc.start])
 
-        # If we enter this loop it implies the joining path between 2 arcs from the
+        # If we enter this if statement it implies the joining path between 2 arcs from the
         # same pocket has cut across material that probably shouldn't have been cut.
         # If we are getting unnecessary RAPID_OUTSIDE moves when joining arcs this
         # is probably related.
@@ -1080,6 +1081,7 @@ class Pocket(BasePocket):
                 voronoi = self._start_point_perimeter(polygons, already_cut, step)
             elif starting_point_tactic == StartPointTactic.MID_CUT:
                 voronoi = self._start_point_mid_cut(polygons, already_cut)
+        assert voronoi is not None
 
         clean_polygon: Polygon = voronoi.polygon  # Remove duplicate points.
         super().__init__(clean_polygon, step, winding_dir, generate, voronoi, debug)
@@ -1159,4 +1161,67 @@ class Pocket(BasePocket):
 
 class InsidePocket(Pocket):
     pass
+
+
+class EntryCircle:
+    def __init__(
+            self,
+            center: Point,
+            radius: float,
+            step: float,
+            winding_dir: ArcDir,
+            start_angle: float = 0,
+            already_cut: Optional[Polygon] = None,
+            arcs: Optional[List[ArcData]] = None) :
+        print("**", already_cut)
+        self.center = center
+        self.radius = radius
+        self.step = step
+        self.winding_dir = winding_dir
+        self.start_angle = start_angle
+
+        self.already_cut = already_cut
+        if self.already_cut is None:
+            self.already_cut = Polygon()
+
+        self.arcs = arcs
+        if self.arcs is None:
+            self.arcs: List[ArcData] = []
+
+    def spiral(self):
+        loop: float = 0.25
+        offset: List[float] = [0.0, 0.0]
+        while loop * self.step < self.radius:
+            orientation = round(loop * 4) % 4
+            if orientation == 0:
+                start_angle = 0
+                offset[1] -= self.step / 4
+                section_radius = loop * self.step
+            elif orientation == 1:
+                start_angle = math.pi / 2
+                offset[0] -= self.step / 4
+                section_radius = loop * self.step
+            elif orientation == 2:
+                start_angle = math.pi
+                offset[1] += self.step / 4
+                section_radius = loop * self.step
+            elif orientation == 3:
+                start_angle = 3 * math.pi / 2
+                offset[0] += self.step / 4
+                section_radius = loop * self.step
+            else:
+                raise
+
+            section_center = Point(self.center.x + offset[0], self.center.y + offset[1])
+            new_ark = create_arc(section_center, section_radius, start_angle, math.pi / 2)
+            self.arcs += arcs_from_circle_diff(new_ark, self.already_cut)
+
+            loop += 0.25  # 1/4 turn.
+
+        print(offset)
+        
+    def circle(self):        
+        new_ark = create_arc(self.center, self.radius, 0, math.pi * 2 -0.001)
+        self.arcs += arcs_from_circle_diff(new_ark, self.already_cut)
+
 
