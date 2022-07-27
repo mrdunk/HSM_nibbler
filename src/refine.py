@@ -58,7 +58,8 @@ def display_visited_voronoi_edges(toolpath, colour="black"):
         plt.plot(x[0], y[0], 'x', c=colour)
         plt.plot(x[-1], y[-1], 'x', c=colour)
 
-def display_toolpath(toolpath, cut_colour="green", rapid_inside_colour="blue", rapid_outside_colour="orange"):
+def display_toolpath(
+        toolpath, cut_colour="green", rapid_inside_colour="blue", rapid_outside_colour="orange"):
     # Display path.
     for element in toolpath.path:
         if type(element).__name__ == "Arc":
@@ -84,7 +85,7 @@ def generate_tool_path(shapes, step_size, inner=True):
 
     if inner:
         #already_cut = Polygon()
-        already_cut = shapes.geoms[0].buffer(-6)
+        already_cut = shapes.geoms[0].buffer(-8)
         #already_cut = already_cut.difference(Point(-20.93476, 0).buffer(1))
 
         toolpath = geometry.Pocket(
@@ -120,9 +121,9 @@ def generate_tool_path(shapes, step_size, inner=True):
 
     display_outline(already_cut)
 
-    timeslice = 100  # ms
+    timeslice = 1000  # ms
     for index, progress in enumerate(toolpath.get_arcs(timeslice)):
-        print(index, progress)
+        print(index, round(progress * 1000) / 1000)
         # toolpath.path contains the currently generated path data at this point.
     return toolpath
 
@@ -155,8 +156,19 @@ def main(argv):
     modelspace = dxf_data.modelspace()
     shapes = dxf.dxf_to_polygon(modelspace)
 
-    #toolpath = generate_tool_path(shapes, step_size, inner=True)
-    toolpath = generate_tool_path(shapes, step_size, inner=False)
+    toolpath = generate_tool_path(shapes, step_size, inner=True)
+    #toolpath = generate_tool_path(shapes, self.step, inner=False)
+
+    entry_circle = geometry.EntryCircle(
+            toolpath.start_point,
+            toolpath.start_radius,
+            step_size,
+            geometry.ArcDir.Closest,
+            already_cut=toolpath.starting_cut_area)
+    entry_circle.spiral()
+    entry_circle.circle()
+    toolpath.path = entry_circle.arcs #+ toolpath.path
+
 
     display_outline(shapes)
     display_toolpath(toolpath)
