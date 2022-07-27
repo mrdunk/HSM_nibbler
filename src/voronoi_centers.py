@@ -552,7 +552,7 @@ class VoronoiCenters:
             self._store_edge(new_edge_2)
 
         # New vertex 
-        if new_edge is None or new_edge.length == 0:
+        if new_edge is None or new_edge.length == 0: 
             assert point.equals(Point(new_vertex))
             self.start_point = Point(new_vertex)
             self.start_distance = self.distance_from_geom(Point(new_vertex))

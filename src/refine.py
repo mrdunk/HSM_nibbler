@@ -85,6 +85,7 @@ def generate_tool_path(shapes, step_size, inner=True):
 
     if inner:
         #already_cut = Polygon()
+
         already_cut = shapes.geoms[0].buffer(-8)
         #already_cut = already_cut.difference(Point(-20.93476, 0).buffer(1))
 

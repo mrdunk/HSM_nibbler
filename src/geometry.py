@@ -1218,3 +1218,4 @@ class EntryCircle:
         self.arcs += arcs_from_circle_diff(new_ark, self.already_cut)
 
 
+
