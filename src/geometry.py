@@ -267,16 +267,193 @@ def _colapse_dupe_points(line: LineString) -> Optional[LineString]:
     return LineString(points)
 
 
-class BasePocket:
-    """
-    A CAM library to generate a HSM "peeling" pocketing toolpath.
-    """
-
+class BaseGeometry:
     # TODO: Can we get by with only cut_area_total2?
     # Cut area so far, calculated by appending full circles.
     cut_area_total: Polygon
     # Cut area so far, calculated by appending arc segments, dilated by (step / 2).
     cut_area_total2: Polygon
+
+    starting_cut_area: Optional[Polygon] = None
+
+    def __init__(
+            self,
+            to_cut: Polygon,
+            step: float,
+            winding_dir: ArcDir,
+            already_cut: Polygon = None,
+    ) -> None:
+        self.polygon: Polygon = to_cut
+        self.step: float = step
+        self.winding_dir: ArcDir = winding_dir
+        if already_cut is None:
+            already_cut = Polygon()
+        if not self.starting_cut_area:
+            self.starting_cut_area = already_cut
+
+    def _reset(self) -> None:
+        self.pending_arc_queues: List[List[ArcData]] = []
+        self.last_arc: Optional[ArcData] = None
+        self.dilated_polygon = self.polygon.buffer(self.step / 20)
+
+    def _flush_arc_queues(self) -> None:
+        while self.pending_arc_queues:
+            to_process = self.pending_arc_queues.pop(0)
+            self._arcs_to_path(to_process)
+
+    def _queue_arcs(self, new_arcs: List[ArcData]) -> None:
+        """
+        When an arc intersects with an area that has already been cut the arc may
+        get split into multiple pieces.
+        When we cone to join the arcs we want to join the "left" arcs to each other
+        and the "right" arcs to each other. (There may be more than 2 sets as well.)
+        To do this we need to store arcs in separate queues. Each queue contains
+        arcs that should be joined to each other.
+        """
+
+        # Need to put each arc in the queue with nearest predecessor.
+        modified_queues = set()
+        closest_queue: Optional[List[ArcData]]
+
+        if len(new_arcs) == 1 and len(self.pending_arc_queues) == 1:
+            # Optimization to save expensive repeated distance calculations.
+            # Only a single queue and a single arc so we don't need complicated
+            # queues.
+            # Just add the arc to the single queue.
+            # Since there are no other queues depending on our remaining one,
+            # it is safe to drain it,
+            closest_queue = self.pending_arc_queues[0]
+            closest_queue.append(new_arcs[0])
+            to_process = self.pending_arc_queues.pop(0)
+            self._arcs_to_path(to_process)
+            return
+        else:
+            for arc in new_arcs:
+                closest_queue = None
+                closest_queue_index = None
+                closest_dist = self.step
+                for queue_index, queue in enumerate(self.pending_arc_queues):
+                    dist = arc.path.distance(queue[-1].path)
+                    if dist < closest_dist:
+                        closest_dist = dist
+                        closest_queue = queue
+                        closest_queue_index = queue_index
+                if closest_queue is None:
+                    # Not close to any predecessor. Create new queue.
+                    closest_queue = []
+                    closest_queue_index = len(self.pending_arc_queues)
+                    self.pending_arc_queues.append(closest_queue)
+                closest_queue.append(arc)
+                modified_queues.add(closest_queue_index)
+                assert closest_queue_index is not None
+                assert closest_queue is self.pending_arc_queues[closest_queue_index]
+                assert arc in closest_queue
+
+        # Queues need processed in the order they were created: FIFO.
+        # It is only safe to process the oldest queue (index: 0) as any younger
+        # queue may be a child of it.
+        # TODO: If we really wanted to, whenever there are any un-modified queues,
+        # we could process the contents of all the older queues even though they
+        # are still being appended to before processing the un-modifies queue(s).
+        if modified_queues and 0 not in modified_queues:
+            to_process = self.pending_arc_queues.pop(0)
+            self._arcs_to_path(to_process)
+
+    def _arcs_to_path(self, arcs: List[ArcData]) -> None:
+        """
+        Process list list of arcs, calculate tool path to join one to the next
+        and apply them to the self.path parameter.
+
+        Note: This function modifies the arcs parameter in place.
+        """
+        while arcs:
+            incomplete_arc = arcs.pop(0)
+
+            winding_dir = self.winding_dir
+            if winding_dir == ArcDir.Closest:
+                if self.last_arc is None:
+                    winding_dir = ArcDir.CW
+                else:
+                    # TODO: We could improve this: Rather that taking the opposite
+                    # of the last arc, we could work out the closest end based on
+                    # the last drawn arc.
+                    if self.last_arc.winding_dir == ArcDir.CCW:
+                        winding_dir = ArcDir.CW
+                    else:
+                        winding_dir = ArcDir.CCW
+
+            arc = complete_arc(incomplete_arc, winding_dir)
+            if arc is None:
+                continue
+
+            assert arc.path.length > 0
+            assert len(arc.path.coords) > 2
+            assert arc.span_angle != 0
+
+            if self.last_arc is not None:
+                self.path += self.join_arcs(arc)
+            self.path.append(arc)
+            # This union takes up ~5% of processing time of the whole algorithm.
+            # TODO: Only truncated arcs really need the whole check in 'join_arcs(...)'.
+            # We could tag arcs that need the detailed check and use shapely's
+            # unary_union(...) here for the others.
+            self.cut_area_total2 = self.cut_area_total2.union(arc.path.buffer(self.step / 2))
+
+            self.last_arc = arc
+
+    def join_arcs(self, next_arc: ArcData) -> List[LineData]:
+        """
+        Generate CAM tool path to join the end of one arc to the beginning of the next.
+        """
+        assert self.last_arc
+        lines = []
+        path = LineString([self.last_arc.end, next_arc.start])
+        dilation = (self.step / 2) - (self.step / 20)
+
+        inside_pocket = (
+                path.covered_by(self.dilated_polygon)
+                or path.covered_by(self.cut_area_total2.buffer(-dilation))
+                )
+
+        if inside_pocket:
+            # Whole path is inside pocket and is already cut.
+            not_cut_path_area = (path.buffer(self.step / 2).
+                    difference(self.cut_area_total2).buffer(dilation))
+            split_path = split(path, not_cut_path_area)
+
+            for part in split_path.geoms:
+                assert part.type == "LineString"
+
+                move_style = MoveStyle.RAPID_INSIDE
+                if part.intersects(not_cut_path_area):
+                    move_style = MoveStyle.CUT
+
+                lines.append(LineData(
+                    Point(part.coords[0]), Point(part.coords[-1]), part, move_style))
+            # Shapely paths are not particularly accurate.
+            # Clamp endpoints on actual arcs.
+            lines[0] = LineData(
+                    self.last_arc.end,
+                    lines[0].end,
+                    lines[0].path,
+                    lines[0].move_style)
+            lines[-1] = LineData(
+                    lines[-1].start,
+                    next_arc.start,
+                    lines[-1].path,
+                    lines[-1].move_style)
+        else:
+            # Path is not entirely inside pocket or crosses uncut area.
+            move_style = MoveStyle.RAPID_OUTSIDE
+            lines.append(LineData(self.last_arc.end, next_arc.start, path, move_style))
+
+        return lines
+
+
+class BasePocket(BaseGeometry):
+    """
+    A CAM library to generate a HSM "peeling" pocketing toolpath.
+    """
 
     last_arc: Optional[ArcData]
     last_circle: Optional[ArcData]
@@ -285,27 +462,30 @@ class BasePocket:
 
     def __init__(
             self,
-            polygon: Polygon,
+            to_cut: Polygon,
             step: float,
             winding_dir: ArcDir,
             generate: bool = False,
             voronoi: Optional[VoronoiCenters] = None,
             debug: bool = False,
     ) -> None:
+        super().__init__(to_cut, step, winding_dir)
+
         assert voronoi
 
-        self.step: float = step
-        self.winding_dir: ArcDir = winding_dir
+        #self.step: float = step
+        #self.winding_dir: ArcDir = winding_dir
         self.generate = generate
         self.voronoi = voronoi
         self.debug = debug
-        self.polygon: Polygon = polygon
 
         self._reset()
         self.calculate_path()
 
     def _reset(self) -> None:
         """ Cleanup and/or initialise everything. """
+        super()._reset()
+
         self.arc_fail_count: int = 0
         self.path_fail_count: int = 0
         self.loop_count: int = 0
@@ -314,7 +494,6 @@ class BasePocket:
         self.open_paths: Dict[int, Tuple[float, float]] = {}
 
         self.path: List[Union[ArcData, LineData]] = []
-        self.pending_arc_queues: List[List[ArcData]] = []
 
         self.path_len_progress: float = 0.0
         self.path_len_total: float = 0.0
@@ -330,7 +509,6 @@ class BasePocket:
             for ring in [poly.exterior] + list(poly.interiors):
                 self.dilated_polygon_boundaries.append(
                         ring.buffer(self.step * SKIP_EDGE_ARCS))
-        self.dilated_polygon = self.polygon.buffer(self.step / 20)
 
         self.last_arc: Optional[ArcData] = None
 
@@ -668,7 +846,7 @@ class BasePocket:
 
         return (distance, filtered_arcs)
 
-    def _join_branches(self, start_vertex: Tuple[float, float]) -> LineString:
+    def _join_voronoi_branches(self, start_vertex: Tuple[float, float]) -> LineString:
         """
         Walk a section of the voronoi edge tree, creating a combined edge as we
         go.
@@ -720,96 +898,6 @@ class BasePocket:
 
         return _colapse_dupe_points(line)
 
-    def _arcs_to_path(self, arcs: List[ArcData]) -> None:
-        """
-        Process list list of arcs, calculate tool path to join one to the next
-        and apply them to the self.path parameter.
-
-        Note: This function modifies the arcs parameter in place.
-        """
-        while arcs:
-            incomplete_arc = arcs.pop(0)
-
-            winding_dir = self.winding_dir
-            if winding_dir == ArcDir.Closest:
-                if self.last_arc is None:
-                    winding_dir = ArcDir.CW
-                else:
-                    # TODO: We could improve this: Rather that taking the opposite
-                    # of the last arc, we could work out the closest end based on
-                    # the last drawn arc.
-                    if self.last_arc.winding_dir == ArcDir.CCW:
-                        winding_dir = ArcDir.CW
-                    else:
-                        winding_dir = ArcDir.CCW
-
-            arc = complete_arc(incomplete_arc, winding_dir)
-            if arc is None:
-                continue
-
-            assert arc.path.length > 0
-            assert len(arc.path.coords) > 2
-            assert arc.span_angle != 0
-
-            if self.last_arc is not None:
-                self.path += self.join_arcs(arc)
-            self.path.append(arc)
-            # This union takes up ~5% of processing time of the whole algorithm.
-            # TODO: Only truncated arcs really need the whole check in 'join_arcs(...)'.
-            # We could tag arcs that need the detailed check and use shapely's
-            # unary_union(...) here for the others.
-            self.cut_area_total2 = self.cut_area_total2.union(arc.path.buffer(self.step / 2))
-
-            self.last_arc = arc
-
-    def join_arcs(self, next_arc: ArcData) -> List[LineData]:
-        """
-        Generate CAM tool path to join the end of one arc to the beginning of the next.
-        """
-        assert self.last_arc
-        lines = []
-        path = LineString([self.last_arc.end, next_arc.start])
-        dilation = (self.step / 2) - (self.step / 20)
-
-        inside_pocket = (
-                path.covered_by(self.dilated_polygon)
-                or path.covered_by(self.cut_area_total2.buffer(-dilation))
-                )
-
-        if inside_pocket:
-            # Whole path is inside pocket and is already cut.
-            not_cut_path_area = (path.buffer(self.step / 2).
-                    difference(self.cut_area_total2).buffer(dilation))
-            split_path = split(path, not_cut_path_area)
-
-            for part in split_path.geoms:
-                assert part.type == "LineString"
-
-                move_style = MoveStyle.RAPID_INSIDE
-                if part.intersects(not_cut_path_area):
-                    move_style = MoveStyle.CUT
-
-                lines.append(LineData(
-                    Point(part.coords[0]), Point(part.coords[-1]), part, move_style))
-            # Shapely paths are not particularly accurate.
-            # Clamp endpoints on actual arcs.
-            lines[0] = LineData(
-                    self.last_arc.end,
-                    lines[0].end,
-                    lines[0].path,
-                    lines[0].move_style)
-            lines[-1] = LineData(
-                    lines[-1].start,
-                    next_arc.start,
-                    lines[-1].path,
-                    lines[-1].move_style)
-        else:
-            # Path is not entirely inside pocket or crosses uncut area.
-            move_style = MoveStyle.RAPID_OUTSIDE
-            lines.append(LineData(self.last_arc.end, next_arc.start, path, move_style))
-
-        return lines
-
     def _get_arcs(self, timeslice: int = 0):
         # TODO: Deprecated. Remove.
         return self.get_arcs(timeslice)
@@ -834,7 +922,7 @@ class BasePocket:
         while start_vertex is not None:
             # This outer loop iterates through the voronoi vertexes, looking for
             # a voronoi edge that has not yet had arcs calculated for it.
-            combined_edge = self._join_branches(start_vertex)
+            combined_edge = self._join_voronoi_branches(start_vertex)
             if not combined_edge:
                 start_vertex = self._choose_next_path()
                 continue
@@ -884,68 +972,6 @@ class BasePocket:
         log(f"len(path): {len(self.path)}")
         log(f"path_fail_count: {self.path_fail_count}")
 
-    def _flush_arc_queues(self) -> None:
-        while self.pending_arc_queues:
-            to_process = self.pending_arc_queues.pop(0)
-            self._arcs_to_path(to_process)
-
-    def _queue_arcs(self, new_arcs: List[ArcData]) -> None:
-        """
-        When an arc intersects with an area that has already been cut the arc may
-        get split into multiple pieces.
-        When we cone to join the arcs we want to join the "left" arcs to each other
-        and the "right" arcs to each other. (There may be more than 2 sets as well.)
-        To do this we need to store arcs in separate queues. Each queue contains
-        arcs that should be joined to each other.
-        """
-
-        # Need to put each arc in the queue with nearest predecessor.
-        modified_queues = set()
-        closest_queue: Optional[List[ArcData]]
-
-        if len(new_arcs) == 1 and len(self.pending_arc_queues) == 1:
-            # Optimization to save expensive repeated distance calculations.
-            # Only a single queue and a single arc so we don't need complicated
-            # queues.
-            # Just add the arc to the single queue.
-            # Since there are no other queues depending on our remaining one,
-            # it is safe to drain it,
-            closest_queue = self.pending_arc_queues[0]
-            closest_queue.append(new_arcs[0])
-            to_process = self.pending_arc_queues.pop(0)
-            self._arcs_to_path(to_process)
-            return
-        else:
-            for arc in new_arcs:
-                closest_queue = None
-                closest_queue_index = None
-                closest_dist = self.step
-                for queue_index, queue in enumerate(self.pending_arc_queues):
-                    dist = arc.path.distance(queue[-1].path)
-                    if dist < closest_dist:
-                        closest_dist = dist
-                        closest_queue = queue
-                        closest_queue_index = queue_index
-                if closest_queue is None:
-                    # Not close to any predecessor. Create new queue.
-                    closest_queue = []
-                    closest_queue_index = len(self.pending_arc_queues)
-                    self.pending_arc_queues.append(closest_queue)
-                closest_queue.append(arc)
-                modified_queues.add(closest_queue_index)
-                assert closest_queue_index is not None
-                assert closest_queue is self.pending_arc_queues[closest_queue_index]
-                assert arc in closest_queue
-
-        # Queues need processed in the order they were created: FIFO.
-        # It is only safe to process the oldest queue (index: 0) as any younger
-        # queue may be a child of it.
-        # TODO: If we really wanted to, whenever there are any un-modified queues,
-        # we could process the contents of all the older queues even though they
-        # are still being appended to before processing the un-modifies queue(s).
-        if modified_queues and 0 not in modified_queues:
-            to_process = self.pending_arc_queues.pop(0)
-            self._arcs_to_path(to_process)
 
     def _filter_arc(self, arc: ArcData) -> Optional[ArcData]:
         """
@@ -1057,11 +1083,10 @@ class Pocket(BasePocket):
     ) -> None:
         if already_cut is None:
             already_cut = Polygon()
-
-        polygons = already_cut
-        polygons = polygons.union(to_cut)
-
         self.starting_cut_area = already_cut
+
+        polygons = self.starting_cut_area
+        polygons = polygons.union(to_cut)
 
         if voronoi is None:
             if starting_point is not None:
@@ -1075,6 +1100,7 @@ class Pocket(BasePocket):
         assert voronoi is not None
 
         clean_polygon: Polygon = voronoi.polygon  # Remove duplicate points.
+
         super().__init__(clean_polygon, step, winding_dir, generate, voronoi, debug)
 
     def _reset(self) -> None:
@@ -1154,29 +1180,36 @@ class InsidePocket(Pocket):
     pass
 
 
-class EntryCircle:
+class EntryCircle(BaseGeometry):
     def __init__(
             self,
+            to_cut: Polygon,
             center: Point,
             radius: float,
             step: float,
             winding_dir: ArcDir,
             start_angle: float = 0,
             already_cut: Optional[Polygon] = None,
-            arcs: Optional[List[ArcData]] = None) :
+            path: Optional[List[ArcData]] = None) :
+        super().__init__(to_cut, step, winding_dir, already_cut)
+
         self.center = center
         self.radius = radius
-        self.step = step
-        self.winding_dir = winding_dir
+        #self.step = step
+        #self.winding_dir = winding_dir
         self.start_angle = start_angle
 
-        self.already_cut = already_cut
-        if self.already_cut is None:
-            self.already_cut = Polygon()
+        #self.already_cut = already_cut
+        #if self.already_cut is None:
+        #    self.already_cut = Polygon()
 
-        self.arcs = arcs
-        if self.arcs is None:
-            self.arcs: List[ArcData] = []
+        self.path = path
+        if self.path is None:
+            self.path: List[ArcData] = []
+
+        self.cut_area_total2 = self.starting_cut_area.buffer(self.step / 2)
+
+        self._reset()
 
     def spiral(self):
         loop: float = 0.25
@@ -1203,17 +1236,21 @@ class EntryCircle:
                 raise
 
             section_center = Point(self.center.x + offset[0], self.center.y + offset[1])
-            new_ark = create_arc(section_center, section_radius, start_angle, math.pi / 2)
+            new_arc = create_arc(section_center, section_radius, start_angle, math.pi / 2)
             if section_radius > self.radius:
                 mask = self.center.buffer(self.radius)
-                masked_arc = new_ark.path.intersection(mask)
-                new_ark = create_arc_from_path(Point(offset), masked_arc, section_radius)
+                masked_arc = new_arc.path.intersection(mask)
+                new_arc = create_arc_from_path(Point(offset), masked_arc, section_radius)
 
-            self.arcs += arcs_from_circle_diff(new_ark, self.already_cut)
+            new_arcs = arcs_from_circle_diff(new_arc, self.starting_cut_area)
+            self._queue_arcs(new_arcs)
+            self._flush_arc_queues()
 
             loop += 0.25  # 1/4 turn.
 
     def circle(self):        
-        new_ark = create_arc(self.center, self.radius, 0, math.pi * 2 -0.001)
-        self.arcs += arcs_from_circle_diff(new_ark, self.already_cut)
+        new_arc = create_arc(self.center, self.radius, 0, math.pi * 2 -0.001)
+        new_arcs = arcs_from_circle_diff(new_arc, self.starting_cut_area)
+        self._queue_arcs(new_arcs)
+        self._flush_arc_queues()
 

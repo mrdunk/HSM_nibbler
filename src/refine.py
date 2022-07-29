@@ -92,6 +92,7 @@ def generate_tool_path(shapes, step_size, inner=True):
                 shapes,
                 step_size,
                 geometry.ArcDir.Closest,
+                #geometry.ArcDir.CW,
                 already_cut=already_cut,
                 generate=True,
                 #starting_point=Point(0, -28),
@@ -160,14 +161,15 @@ def main(argv):
     #toolpath = generate_tool_path(shapes, self.step, inner=False)
 
     entry_circle = geometry.EntryCircle(
+            shapes,
             toolpath.start_point,
             toolpath.start_radius,
             step_size,
-            geometry.ArcDir.Closest,
+            toolpath.winding_dir,
             already_cut=toolpath.starting_cut_area)
     entry_circle.spiral()
     entry_circle.circle()
-    toolpath.path = entry_circle.arcs + toolpath.path
+    toolpath.path = entry_circle.path + toolpath.path
 
 
     display_outline(shapes)
