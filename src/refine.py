@@ -105,8 +105,8 @@ def generate_tool_path(shapes, step_size, inner=True):
         all_pockets = MultiPolygon()
         for shape in shapes.geoms:
             filled_shape = Polygon(shape.exterior)
-            desired_pocket = Polygon(filled_shape.exterior).buffer(5).difference(filled_shape)
-            cut = desired_pocket.difference(filled_shape.buffer(2))
+            desired_pocket = Polygon(filled_shape.exterior).buffer(6).difference(filled_shape)
+            cut = desired_pocket.difference(filled_shape.buffer(4))
             already_cut = already_cut.union(cut)
             all_pockets = all_pockets.union(desired_pocket)
 
@@ -120,7 +120,7 @@ def generate_tool_path(shapes, step_size, inner=True):
                 #starting_point=Point(0, 42.5),
                 debug=True)
 
-    #display_outline(already_cut)
+    display_outline(already_cut)
 
     timeslice = 1000  # ms
     for index, progress in enumerate(toolpath.get_arcs(timeslice)):
@@ -157,8 +157,8 @@ def main(argv):
     modelspace = dxf_data.modelspace()
     shapes = dxf.dxf_to_polygon(modelspace)
 
-    toolpath = generate_tool_path(shapes, step_size, inner=True)
-    #toolpath = generate_tool_path(shapes, self.step, inner=False)
+    #toolpath = generate_tool_path(shapes, step_size, inner=True)
+    toolpath = generate_tool_path(shapes, step_size, inner=False)
 
     display_outline(shapes)
     display_toolpath(toolpath)

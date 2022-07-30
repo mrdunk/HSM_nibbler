@@ -1320,7 +1320,7 @@ class EntryCircle(BaseGeometry):
         self._flush_arc_queues()
 
     def circle(self):
-        new_arc = create_arc(self.center, self.radius, 0, math.pi * 2 -0.1, self.winding_dir)
+        new_arc = create_arc(self.center, self.radius, 0, math.pi * 2 -0.00000001, self.winding_dir)
         sorted_arcs = self._split_arcs([new_arc])
         self._queue_arcs(sorted_arcs)
         self._flush_arc_queues()

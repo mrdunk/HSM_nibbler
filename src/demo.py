@@ -15,41 +15,6 @@ import dxf
 import geometry
 
 
-def spiral(center: Point, radius: float, step_size: float) -> List:
-    arcs: List[Arc] = []
-    loop: float = 0.25
-    offset: List[float] = [0.0, 0.0]
-    while loop * step_size < radius:
-        orientation = round(loop * 4) % 4
-        if orientation == 0:
-            start_angle = 0
-            offset[1] -= step_size / 4
-            section_radius = loop * step_size
-        elif orientation == 1:
-            start_angle = math.pi / 2
-            offset[0] -= step_size / 4
-            section_radius = loop * step_size
-        elif orientation == 2:
-            start_angle = math.pi
-            offset[1] += step_size / 4
-            section_radius = loop * step_size
-        elif orientation == 3:
-            start_angle = 3 * math.pi / 2
-            offset[0] += step_size / 4
-            section_radius = loop * step_size
-        else:
-            raise
-
-        section_center = Point(center.x + offset[0], center.y + offset[1])
-        arcs.append(geometry.create_arc(
-            section_center, section_radius, start_angle, math.pi / 2))
-
-        loop += 0.25  # 1/4 turn.
-        
-    arcs.append(geometry.create_arc(center, radius, 0, math.pi * 2 -0.001))
-
-    return arcs
-
 def print_entity(entity: ezdxf.entities.DXFGraphic, indent: int = 0):
     """ Display some debug information about a DXF file. """
     dxf_attributes = ["start", "end", "center", "radius", "count"]
@@ -117,18 +82,6 @@ def display_starting_circle(toolpath, colour="orange"):
             toolpath.start_point, toolpath.start_radius).path
     x, y = starting_circle.xy
     plt.plot(x, y, c=colour, linewidth=4)
-
-def display_starting_spiral(toolpath, colour="green"):
-    """
-    Draw a starting entry spiral.
-    Just for demo purposes; not provided by HSM library.
-    """
-    starting_arcs = spiral(toolpath.start_point, toolpath.start_radius, toolpath.step)
-    for element in starting_arcs:
-        x, y = element.path.xy
-        plt.plot(x, y, c=colour, linewidth=1)
-
-    return
 
 def display_toolpath(toolpath, cut_colour="green", rapid_inside_colour="blue", rapid_outside_colour="orange"):
     # Display path.
@@ -203,7 +156,6 @@ def main(argv):
     # Call toolpath.calculate_path() to scrap the existing and regenerate toolpath.
 
     display_outline(shape)
-    display_starting_spiral(toolpath)
     #display_starting_circle(toolpath)
     display_toolpath(toolpath)
     display_voronoi(toolpath)
