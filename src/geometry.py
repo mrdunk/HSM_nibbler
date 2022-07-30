@@ -552,6 +552,9 @@ class BasePocket(BaseGeometry):
         """ Cleanup and/or initialise everything. """
         super()._reset()
 
+        self.start_point: Point = self.voronoi.start_point
+        self.start_radius: float = self.voronoi.start_distance or 0
+
         self.arc_fail_count: int = 0
         self.path_fail_count: int = 0
         self.loop_count: int = 0
@@ -576,7 +579,18 @@ class BasePocket(BaseGeometry):
                 self.dilated_polygon_boundaries.append(
                         ring.buffer(self.step * SKIP_EDGE_ARCS))
 
-        self.last_arc: Optional[ArcData] = None
+        entry_circle = EntryCircle(
+                self.polygon,
+                self.start_point,
+                self.start_radius,
+                self.step,
+                self.winding_dir,
+                already_cut=self.cut_area_total,
+                path=self.path)
+        entry_circle.spiral()
+        entry_circle.circle()
+
+        self.last_arc = entry_circle.last_arc
 
     def calculate_path(self) -> None:
         """ Reset path and restart from beginning. """
@@ -1170,9 +1184,6 @@ class Pocket(BasePocket):
     def _reset(self) -> None:
         super()._reset()
 
-        self.start_point: Point = self.voronoi.start_point
-        self.start_radius: float = self.voronoi.start_distance or 0
-
         # Assume starting circle is already cut.
         self.last_circle: Optional[ArcData] = create_circle(
             self.start_point, self.start_radius)
@@ -1259,13 +1270,7 @@ class EntryCircle(BaseGeometry):
 
         self.center = center
         self.radius = radius
-        #self.step = step
-        #self.winding_dir = winding_dir
         self.start_angle = start_angle
-
-        #self.already_cut = already_cut
-        #if self.already_cut is None:
-        #    self.already_cut = Polygon()
 
         self.path = path
         if self.path is None:
@@ -1314,8 +1319,8 @@ class EntryCircle(BaseGeometry):
         self._queue_arcs(sorted_arcs)
         self._flush_arc_queues()
 
-    def circle(self):        
-        new_arc = create_arc(self.center, self.radius, 0, math.pi * 2 -0.0000001, self.winding_dir)
+    def circle(self):
+        new_arc = create_arc(self.center, self.radius, 0, math.pi * 2 -0.1, self.winding_dir)
         sorted_arcs = self._split_arcs([new_arc])
         self._queue_arcs(sorted_arcs)
         self._flush_arc_queues()

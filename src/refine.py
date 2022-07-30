@@ -160,18 +160,6 @@ def main(argv):
     toolpath = generate_tool_path(shapes, step_size, inner=True)
     #toolpath = generate_tool_path(shapes, self.step, inner=False)
 
-    entry_circle = geometry.EntryCircle(
-            shapes,
-            toolpath.start_point,
-            toolpath.start_radius,
-            step_size,
-            toolpath.winding_dir,
-            already_cut=toolpath.starting_cut_area)
-    entry_circle.spiral()
-    #entry_circle.circle()
-    toolpath.path = entry_circle.path + toolpath.path
-
-
     display_outline(shapes)
     display_toolpath(toolpath)
     #display_voronoi(toolpath)
