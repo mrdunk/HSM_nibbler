@@ -127,7 +127,12 @@ def create_circle(origin: Point, radius: float) -> ArcData:
     return ArcData(
         origin, radius, None, None, 0, span_angle, None, origin.buffer(radius).boundary, "")
 
-def create_arc(origin: Point, radius: float, start_angle: float, span_angle: float) -> ArcData:
+def create_arc(
+        origin: Point,
+        radius: float,
+        start_angle: float,
+        span_angle: float,
+        winding_dir: ArcDir) -> ArcData:
     """
     Generate a arc.
 
@@ -148,7 +153,9 @@ def create_arc(origin: Point, radius: float, start_angle: float, span_angle: flo
     arc_paths = split(circle_path, right_border).geoms[0]
 
     arc_paths = rotate(arc_paths, -start_angle, origin=origin, use_radians=True)
-    return ArcData(origin, radius, None, None, start_angle, span_angle, ArcDir.CW, arc_paths, "")
+    if winding_dir == ArcDir.CCW:
+        arc_paths = LineString([(-point[0], point[1]) for point in arc_paths.coords])
+    return ArcData(origin, radius, None, None, start_angle, span_angle, winding_dir, arc_paths, "")
 
 def create_arc_from_path(
         origin: Point,
@@ -169,9 +176,11 @@ def create_arc_from_path(
 
 def complete_arc(
         arc_data: ArcData,
-        winding_dir: ArcDir
+        winding_dir: ArcDir = ArcDir.CW
         ) -> Optional[ArcData]:
     """
+    Calculate start_angle, span_angle and radius.
+    Fix start, end and path direction based on winding_dir.
     This is called a lot so any optimizations here save us time.
     Given some properties of an arc, calculate the others.
     """
@@ -296,10 +305,29 @@ class BaseGeometry:
         self.last_arc: Optional[ArcData] = None
         self.dilated_polygon = self.polygon.buffer(self.step / 20)
 
+        self.cut_area_total = self.starting_cut_area
+        self.cut_area_total2 = self.starting_cut_area.buffer(self.step / 2)
+
     def _flush_arc_queues(self) -> None:
         while self.pending_arc_queues:
             to_process = self.pending_arc_queues.pop(0)
             self._arcs_to_path(to_process)
+
+    def _check_queue_overlap(self, arc: ArcData, queue_index: int) -> bool:
+        """
+        Arcs should only be added if the area inside them has been cleared.
+        This checks for overlaps between the specified arc and those that are
+        to be cut /after/ it.
+        Returns:
+            True: If no overlap occurs.
+            False: If the proposed arc is blocked for this queue by as yet uncut arcs.
+        """
+        dilated_arc = arc.path.buffer(self.step)
+        for queue in self.pending_arc_queues[queue_index + 1:]:
+            for existing_arc in queue:
+                if existing_arc.path.intersects(dilated_arc):
+                    return False
+        return True
 
     def _queue_arcs(self, new_arcs: List[ArcData]) -> None:
         """
@@ -312,8 +340,7 @@ class BaseGeometry:
         """
 
         # Need to put each arc in the queue with nearest predecessor.
-        modified_queues = set()
-        closest_queue: Optional[List[ArcData]]
+        modified_queues_indexes = set()
 
         if len(new_arcs) == 1 and len(self.pending_arc_queues) == 1:
             # Optimization to save expensive repeated distance calculations.
@@ -328,23 +355,35 @@ class BaseGeometry:
             self._arcs_to_path(to_process)
             return
         else:
+            closest_queue: Optional[List[ArcData]]
             for arc in new_arcs:
+                #arc = complete_arc(arc, self.winding_dir)
                 closest_queue = None
                 closest_queue_index = None
                 closest_dist = self.step
                 for queue_index, queue in enumerate(self.pending_arc_queues):
-                    dist = arc.path.distance(queue[-1].path)
-                    if dist < closest_dist:
-                        closest_dist = dist
-                        closest_queue = queue
-                        closest_queue_index = queue_index
+                    if self.winding_dir == ArcDir.Closest:
+                        combined_dist = 1
+                        seperate_dist = 0
+                    else:
+                        seperate_dist = (
+                                queue[-1].start.distance(queue[-1].end) + arc.start.distance(arc.end))
+                        combined_dist = (
+                                queue[-1].start.distance(arc.end) + queue[-1].end.distance(arc.start))
+
+                    seperation = arc.path.distance(queue[-1].path)
+                    if seperation < closest_dist or combined_dist < seperate_dist:
+                        if self._check_queue_overlap(arc, queue_index):
+                            closest_dist = seperation
+                            closest_queue = queue
+                            closest_queue_index = queue_index
                 if closest_queue is None:
                     # Not close to any predecessor. Create new queue.
                     closest_queue = []
                     closest_queue_index = len(self.pending_arc_queues)
                     self.pending_arc_queues.append(closest_queue)
                 closest_queue.append(arc)
-                modified_queues.add(closest_queue_index)
+                modified_queues_indexes.add(closest_queue_index)
                 assert closest_queue_index is not None
                 assert closest_queue is self.pending_arc_queues[closest_queue_index]
                 assert arc in closest_queue
@@ -355,7 +394,7 @@ class BaseGeometry:
         # TODO: If we really wanted to, whenever there are any un-modified queues,
         # we could process the contents of all the older queues even though they
         # are still being appended to before processing the un-modifies queue(s).
-        if modified_queues and 0 not in modified_queues:
+        if modified_queues_indexes and 0 not in modified_queues_indexes:
             to_process = self.pending_arc_queues.pop(0)
             self._arcs_to_path(to_process)
 
@@ -367,7 +406,10 @@ class BaseGeometry:
         Note: This function modifies the arcs parameter in place.
         """
         while arcs:
-            incomplete_arc = arcs.pop(0)
+            arc = arcs.pop(0)
+
+            if arc is None:
+                continue
 
             winding_dir = self.winding_dir
             if winding_dir == ArcDir.Closest:
@@ -382,12 +424,15 @@ class BaseGeometry:
                     else:
                         winding_dir = ArcDir.CCW
 
-            arc = complete_arc(incomplete_arc, winding_dir)
-            if arc is None:
-                continue
+                    if self.last_arc.end.distance(arc.start) < self.last_arc.end.distance(arc.end):
+                        winding_dir = ArcDir.CW
+                    if self.last_arc.start.distance(arc.end) < self.last_arc.end.distance(arc.end):
+                        winding_dir = ArcDir.CW
+                        
+                arc = complete_arc(arc, winding_dir)
 
             assert arc.path.length > 0
-            assert len(arc.path.coords) > 2
+            assert len(arc.path.coords) >= 2
             assert arc.span_angle != 0
 
             if self.last_arc is not None:
@@ -448,6 +493,27 @@ class BaseGeometry:
             lines.append(LineData(self.last_arc.end, next_arc.start, path, move_style))
 
         return lines
+
+    def _split_arcs(self, full_arcs: List[ArcData]) -> List[ArcData]:
+        """
+        When an arcs pass through an already cut area, it should be trimmed to
+        remove the already cut section.
+        It's important to keep the sequence of the order of the resulting sub arcs
+        the same as the originals so the final path can pass through them in order.
+        """
+        split_arcs = []
+        for full_arc in full_arcs:
+            new_arcs = arcs_from_circle_diff(full_arc, self.cut_area_total)
+            new_arcs = [complete_arc(new_arc) for new_arc in new_arcs]
+
+            arc_set = set()
+            for new_arc_index, new_arc in enumerate(new_arcs):
+                arc_set.add((full_arc.path.project(new_arc.start), new_arc_index))
+
+            for _, new_arc_index in sorted(arc_set):
+                split_arcs.append(new_arcs[new_arc_index])
+
+        return split_arcs
 
 
 class BasePocket(BaseGeometry):
@@ -762,8 +828,7 @@ class BasePocket(BaseGeometry):
 
             # Compare proposed arc to cut area.
             # We are only interested in sections that have not been cut yet.
-            arcs = arcs_from_circle_diff(
-                circle, self.cut_area_total, color_overide)
+            arcs = self._split_arcs([circle])
             if not arcs:
                 # arc is entirely hidden by previous cut geometry.
 
@@ -821,8 +886,7 @@ class BasePocket(BaseGeometry):
             pos, radius = self._arc_at_distance(
                 distance + dist_offset, edge_extended)
             circle = create_circle(Point(pos), radius)
-            arcs = arcs_from_circle_diff(
-                circle, self.cut_area_total, color_overide)
+            arcs = self._split_arcs([circle])
 
         if count == ITERATION_COUNT and self.debug:
             # Log some debug data.
@@ -1214,6 +1278,7 @@ class EntryCircle(BaseGeometry):
     def spiral(self):
         loop: float = 0.25
         offset: List[float] = [0.0, 0.0]
+        new_arcs = []
         while loop * self.step <= self.radius + self.step / 4:
             orientation = round(loop * 4) % 4
             if orientation == 0:
@@ -1236,21 +1301,22 @@ class EntryCircle(BaseGeometry):
                 raise
 
             section_center = Point(self.center.x + offset[0], self.center.y + offset[1])
-            new_arc = create_arc(section_center, section_radius, start_angle, math.pi / 2)
+            new_arc = create_arc(
+                    section_center, section_radius, start_angle, math.pi / 2, self.winding_dir)
             if section_radius > self.radius:
                 mask = self.center.buffer(self.radius)
                 masked_arc = new_arc.path.intersection(mask)
                 new_arc = create_arc_from_path(Point(offset), masked_arc, section_radius)
-
-            new_arcs = arcs_from_circle_diff(new_arc, self.starting_cut_area)
-            self._queue_arcs(new_arcs)
-            self._flush_arc_queues()
+            new_arcs.append(new_arc)
 
             loop += 0.25  # 1/4 turn.
+        sorted_arcs = self._split_arcs(new_arcs)
+        self._queue_arcs(sorted_arcs)
+        self._flush_arc_queues()
 
     def circle(self):        
-        new_arc = create_arc(self.center, self.radius, 0, math.pi * 2 -0.001)
-        new_arcs = arcs_from_circle_diff(new_arc, self.starting_cut_area)
-        self._queue_arcs(new_arcs)
+        new_arc = create_arc(self.center, self.radius, 0, math.pi * 2 -0.0000001, self.winding_dir)
+        sorted_arcs = self._split_arcs([new_arc])
+        self._queue_arcs(sorted_arcs)
         self._flush_arc_queues()
 

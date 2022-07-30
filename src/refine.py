@@ -120,7 +120,7 @@ def generate_tool_path(shapes, step_size, inner=True):
                 #starting_point=Point(0, 42.5),
                 debug=True)
 
-    display_outline(already_cut)
+    #display_outline(already_cut)
 
     timeslice = 1000  # ms
     for index, progress in enumerate(toolpath.get_arcs(timeslice)):
@@ -168,7 +168,7 @@ def main(argv):
             toolpath.winding_dir,
             already_cut=toolpath.starting_cut_area)
     entry_circle.spiral()
-    entry_circle.circle()
+    #entry_circle.circle()
     toolpath.path = entry_circle.path + toolpath.path
 
 
