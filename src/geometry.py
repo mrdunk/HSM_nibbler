@@ -598,6 +598,14 @@ class BasePocket(BaseGeometry):
         entry_circle.spiral()
         entry_circle.circle()
 
+        if self.starting_radius is not None:
+            radius = min(self.starting_radius, self.max_starting_radius)
+            if (self.path and
+                    self.start_point.buffer(radius).distance(self.path[0].start) < self.step / 20):
+                dx = self.path[0].start.x - self.start_point.x
+                dy = self.path[0].start.y - self.start_point.y
+                self.starting_angle = math.atan2(dx, dy)
+
         self.last_arc = entry_circle.last_arc
 
     def calculate_path(self) -> None:
@@ -1153,7 +1161,11 @@ class Pocket(BasePocket):
     """
     Calculate HSM path for pocket where some of the pocket has already been cleared.
     """
+    start_point: Point
     starting_cut_area: Polygon
+    max_starting_radius: float
+    starting_radius_clear: Optional[bool]
+    starting_angle: Optional[float] = None
 
     def __init__(
             self,
@@ -1188,6 +1200,19 @@ class Pocket(BasePocket):
             starting_radius: Optionally set the required space at the start_point.
                 Used to make sure an entry helix has enough space at the start_point
                 when machining.
+
+        Properties:
+            start_point: The start of the cutting path. If one is not specified with
+                the starting_point parameter, this will be calculated automatically.
+            max_starting_radius: The maximum radius a circle at start_point could
+                be without overlapping the part's edges.
+            starting_radius_clear: Whether a circle at start_point of the radius set
+                by parameter starting_radius is entirely in the area covered by
+                starting_cut_area. This is used to know if cutting an entry helix is
+                required.
+            starting_angle: `None` if the entry circle is completely within the already_cut
+                area. Otherwise it contains the angle to the start of the cutting path
+                where the entry circle intersects the cutting path.
         """
         if already_cut is None:
             already_cut = Polygon()

@@ -10,7 +10,8 @@ import sys
 import math
 import ezdxf
 import matplotlib.pyplot as plt    # type: ignore
-from shapely.geometry import Point
+from shapely.affinity import rotate  # type: ignore
+from shapely.geometry import Point, LineString  # type: ignore
 import dxf
 import geometry
 
@@ -78,16 +79,41 @@ def display_visited_voronoi_edges(toolpath, colour="black"):
         plt.plot(x[-1], y[-1], 'x', c=colour)
 
 def display_entry_point(toolpath):
+    if toolpath.starting_radius is None:
+        # Entry circle not set.
+        return
+
     starting_circle = geometry.create_circle(
             toolpath.start_point, toolpath.starting_radius).path
     x, y = starting_circle.xy
-    plt.plot(x, y, c="orange", linewidth=2)
+
+    colour = "red"
+    if toolpath.starting_radius_clear:
+        colour = "green"
+
+    plt.plot(x, y, linestyle=':', c=colour, linewidth=2)
 
     if toolpath.max_starting_radius < toolpath.starting_radius:
+        # Requested entry circle doesn't fit in the part.
+        # Instead max_starting_radius contains the best fit radius.
         starting_circle = geometry.create_circle(
                 toolpath.start_point, toolpath.max_starting_radius).path
         x, y = starting_circle.xy
-        plt.plot(x, y, c="red", linewidth=2)
+        plt.plot(x, y, linestyle='--', c="red", linewidth=1)
+
+    if toolpath.starting_angle is not None:
+        # This implies the entry circle overlaps the cutting path.
+        # The contained angle is the direction to the start of the cutting path
+        # where it is intersected by the entry circle.
+        radius = min(toolpath.starting_radius, toolpath.max_starting_radius)
+        line = LineString([
+            toolpath.start_point,
+            [toolpath.start_point.x, toolpath.start_point.y + radius]
+            ])
+        line = rotate(line, -toolpath.starting_angle, origin=toolpath.start_point, use_radians=True)
+
+        x, y = line.xy
+        plt.plot(x, y, linestyle='--', c="green", linewidth=2)
 
 def display_starting_circle(toolpath, colour="orange"):
     starting_circle = geometry.create_circle(
@@ -124,7 +150,7 @@ def generate_tool_path(shape, step_size):
             geometry.ArcDir.Closest,
             generate=True,
             #starting_point=Point(-39.9, 11.8),
-            starting_radius=3,
+            starting_radius=2.5,
             debug=True)
 
     timeslice = 1000  # ms
