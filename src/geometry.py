@@ -12,7 +12,7 @@ import time
 
 from shapely.affinity import rotate  # type: ignore
 from shapely.geometry import box, LinearRing, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon  # type: ignore
-from shapely.ops import linemerge, split  # type: ignore
+from shapely.ops import linemerge, split, unary_union  # type: ignore
 
 try:
     from voronoi_centers import round_coord, VoronoiCenters  # type: ignore
@@ -58,9 +58,8 @@ class MoveStyle(Enum):
 
 class StartPointTactic(Enum):
     PERIMETER = 0  # Starting point hint for outer peel. On the outer perimeter.
-    PERIMITER = 0  # Tyop. TODO: remove.
+    PERIMITER = 0  # Typo. TODO: remove.
     WIDEST = 1     # Starting point hint for inner pockets.
-    MID_CUT = 2    # Starting point hint for outer pockets. Mid point on cut area.
 
 
 ArcData = NamedTuple("Arc", [
@@ -142,6 +141,9 @@ def create_arc(
         start_angle: Angle from vertical. (Clockwise)
         span_angle: Angular length of arc.
     """
+    if radius == 0:
+        return None
+
     circle_path = origin.buffer(radius).boundary
 
     line_up = LineString([origin, Point(origin.x, origin.y + radius * 2)])
@@ -242,8 +244,11 @@ def arcs_from_circle_diff(
         debug: str = None
         ) -> List[ArcData]:
     """ Return any sections of circle that do not overlap already_cut. """
-    #if not already_cut:
-    #    return [circle]
+    if not already_cut:
+        return [circle]
+    if circle is None:
+        return None
+
     line_diff = circle.path.difference(already_cut)
     if not line_diff:
         return []
@@ -504,6 +509,8 @@ class BaseGeometry:
         split_arcs = []
         for full_arc in full_arcs:
             new_arcs = arcs_from_circle_diff(full_arc, self.cut_area_total)
+            if not new_arcs:
+                continue
             new_arcs = [complete_arc(new_arc) for new_arc in new_arcs]
 
             arc_set = set()
@@ -533,9 +540,10 @@ class BasePocket(BaseGeometry):
             winding_dir: ArcDir,
             generate: bool = False,
             voronoi: Optional[VoronoiCenters] = None,
+            already_cut: Polygon = None,
             debug: bool = False,
     ) -> None:
-        super().__init__(to_cut, step, winding_dir)
+        super().__init__(to_cut, step, winding_dir, already_cut=already_cut)
 
         assert voronoi
 
@@ -1157,29 +1165,59 @@ class Pocket(BasePocket):
             voronoi: Optional[VoronoiCenters] = None,
             starting_point_tactic: StartPointTactic = StartPointTactic.WIDEST,
             starting_point: Point = None,
+            starting_radius: float = None,
             debug=False,
     ) -> None:
+        """
+        Arguments:
+            to_cut: The area this pocket should cover.
+            step: The distance between cutting path passes.
+            winding_dir: Tactic for choosing clockwise or anticlockwise path sections.
+            already_cut: An area where no cutting path should be generated but
+                also no care needs to be taken when intersecting it. Also rapid moves
+                may pass through it.
+            generate: Whether to use the get_arcs(...) parameter as a generator
+                function (True) or calculate the whole path at the start (False).
+            voronoi: Optionally pass in a voronoi diagram detailing points equidistant
+                from the part edges. If not provided, one will be created.
+            starting_point_tactic: Tactic used to pick the very start of the cutting
+                path.
+            starting_point: Override the automatically calculated cutting path start point.
+                Must be withing either the `to_cut` area or the `already_cut` area if
+                one was specified.
+            starting_radius: Optionally set the required space at the start_point.
+                Used to make sure an entry helix has enough space at the start_point
+                when machining.
+        """
         if already_cut is None:
             already_cut = Polygon()
         self.starting_cut_area = already_cut
+        self.starting_radius = starting_radius
 
-        polygons = self.starting_cut_area
-        polygons = polygons.union(to_cut)
+        complete_pocket = self.starting_cut_area.union(to_cut)
 
         if voronoi is None:
             if starting_point is not None:
-                voronoi = VoronoiCenters(polygons, starting_point=starting_point)
+                voronoi = VoronoiCenters(complete_pocket, starting_point=starting_point)
             elif starting_point_tactic == StartPointTactic.WIDEST:
-                voronoi = self._start_point_widest(polygons, already_cut, step)
+                voronoi = self._start_point_widest(complete_pocket, already_cut, step)
             elif starting_point_tactic == StartPointTactic.PERIMETER:
-                voronoi = self._start_point_perimeter(polygons, already_cut, step)
-            elif starting_point_tactic == StartPointTactic.MID_CUT:
-                voronoi = self._start_point_mid_cut(polygons, already_cut)
+                voronoi = self._start_point_perimeter(complete_pocket, already_cut, step)
         assert voronoi is not None
 
         clean_polygon: Polygon = voronoi.polygon  # Remove duplicate points.
 
-        super().__init__(clean_polygon, step, winding_dir, generate, voronoi, debug)
+        self.max_starting_radius = voronoi.distance_from_geom(voronoi.start_point)
+        self.starting_radius_clear = None
+        if starting_radius and self.max_starting_radius * (step * 1.05) < starting_radius:
+            print(f"Warning: Starting radius of {starting_radius} overlaps boundaries.")
+        if self.starting_radius is not None:
+            radius = min(self.starting_radius, self.max_starting_radius)
+            start_point = voronoi.start_point.buffer(radius)
+            self.starting_radius_clear = start_point.within(already_cut)
+            already_cut = already_cut.union(start_point)
+
+        super().__init__(clean_polygon, step, winding_dir, generate, voronoi, already_cut, debug)
 
     def _reset(self) -> None:
         super()._reset()
@@ -1192,63 +1230,61 @@ class Pocket(BasePocket):
         self.cut_area_total2 = self.starting_cut_area.union(
                 Polygon(self.last_circle.path).buffer(self.step / 2))
 
-    @staticmethod
     def _start_point_widest(
-            polygons: MultiPolygon, already_cut: Polygon, step: float) -> VoronoiCenters:
+            self, polygons: MultiPolygon, already_cut: Polygon, step: float) -> VoronoiCenters:
         """
+        Recalculate the start point to be in the widest space, furthest from any
+        part edge.
         """
         voronoi = VoronoiCenters(polygons, preserve_widest=True)
-        if already_cut and not voronoi.start_point.within(already_cut.buffer(-step / 2)):
+        start = voronoi.start_point
+        if self.starting_radius:
+            start = start.buffer(self.starting_radius)
+        if already_cut and not start.within(already_cut.buffer(-step / 2)):
             # Start point outside cut area.
             # Generate a voronoi diagram of just the cut area and take the
             # start point from that.
             cut_voronoi = VoronoiCenters(already_cut, preserve_widest=True)
             voronoi = VoronoiCenters(polygons, starting_point=cut_voronoi.start_point)
             del cut_voronoi
+
         return voronoi
 
-    @staticmethod
     def _start_point_perimeter(
-            polygons: MultiPolygon, already_cut: Polygon, step: float) -> VoronoiCenters:
+            self, polygons: MultiPolygon, already_cut: Polygon, step: float) -> VoronoiCenters:
         """
-        Recalculate the start point to be just inside the cut area, adjacent to the perimeter.
+        Recalculate the start point to be inside the cut area, adjacent to the perimeter.
         """
         voronoi = VoronoiCenters(polygons, preserve_edge=True)
+        if self.starting_radius is None:
+            return voronoi
 
         perimiter_point = voronoi.start_point
         assert perimiter_point is not None
         voronoi_edge_index = voronoi.vertex_to_edges[perimiter_point.coords[0]]
         assert len(voronoi_edge_index) == 1
         voronoi_edge = voronoi.edges[voronoi_edge_index[0]]
-        edge_section = already_cut.intersection(voronoi_edge)
-        if edge_section.length > step * 2:
-            new_start_point = Point(round_coord(
-                edge_section.interpolate(step).coords[0]))
+        cut_edge_section = already_cut.intersection(voronoi_edge)
+        if cut_edge_section.length > self.starting_radius * 2:
+            cut_edge__0 = Point(cut_edge_section.coords[0])
+            cut_edge__1 = Point(cut_edge_section.coords[1])
+
+            if (cut_edge__0.distance(perimiter_point) < cut_edge__1.distance(perimiter_point)):
+                new_start_point = Point(round_coord(
+                    cut_edge_section.interpolate(self.starting_radius).coords[0]))
+            else:
+                new_start_point = Point(round_coord(
+                    cut_edge_section.interpolate(-self.starting_radius).coords[0]))
+
+            voronoi = VoronoiCenters(polygons, starting_point=new_start_point)
         else:
-            new_start_point = Point(round_coord(
-                edge_section.interpolate(0.5, normalized=True).coords[0]))
+            # Can't fit starting_radius here.
+            # Look for widest point in already_cut area.
+            cut_voronoi = VoronoiCenters(already_cut, preserve_widest=True)
+            voronoi = VoronoiCenters(polygons, starting_point=cut_voronoi.start_point)
+            del cut_voronoi
 
-        return VoronoiCenters(polygons, starting_point=new_start_point)
-
-    @staticmethod
-    def _start_point_mid_cut(polygons: MultiPolygon, already_cut: Polygon) -> VoronoiCenters:
-        """
-        Recalculate the start point half way between the one currently set on the
-        outer perimeter of the already_cut and the inner perimeter of the
-        already_cut.
-        """
-        voronoi = VoronoiCenters(polygons, preserve_edge=True)
-
-        perimiter_point = voronoi.start_point
-        assert perimiter_point is not None
-        voronoi_edge_index = voronoi.vertex_to_edges[perimiter_point.coords[0]]
-        assert len(voronoi_edge_index) == 1
-        voronoi_edge = voronoi.edges[voronoi_edge_index[0]]
-        edge_section = already_cut.intersection(voronoi_edge)
-        new_start_point = Point(round_coord(
-            edge_section.interpolate(0.5, normalized=True).coords[0]))
-
-        return VoronoiCenters(polygons, starting_point=new_start_point)
+        return voronoi
 
 
 class InsidePocket(Pocket):

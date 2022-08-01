@@ -77,6 +77,18 @@ def display_visited_voronoi_edges(toolpath, colour="black"):
         plt.plot(x[0], y[0], 'x', c=colour)
         plt.plot(x[-1], y[-1], 'x', c=colour)
 
+def display_entry_point(toolpath):
+    starting_circle = geometry.create_circle(
+            toolpath.start_point, toolpath.starting_radius).path
+    x, y = starting_circle.xy
+    plt.plot(x, y, c="orange", linewidth=2)
+
+    if toolpath.max_starting_radius < toolpath.starting_radius:
+        starting_circle = geometry.create_circle(
+                toolpath.start_point, toolpath.max_starting_radius).path
+        x, y = starting_circle.xy
+        plt.plot(x, y, c="red", linewidth=2)
+
 def display_starting_circle(toolpath, colour="orange"):
     starting_circle = geometry.create_circle(
             toolpath.start_point, toolpath.start_radius).path
@@ -112,13 +124,12 @@ def generate_tool_path(shape, step_size):
             geometry.ArcDir.Closest,
             generate=True,
             #starting_point=Point(-39.9, 11.8),
+            starting_radius=3,
             debug=True)
-    #toolpath = geometry.InsidePocket(
-    #        shape, step_size, geometry.ArcDir.CW, generate=True, debug=True)
 
-    timeslice = 100  # ms
+    timeslice = 1000  # ms
     for index, progress in enumerate(toolpath.get_arcs(timeslice)):
-        print(index, progress)
+        print(index, round(progress * 1000) / 1000)
         # toolpath.path contains the currently generated path data at this point.
     return toolpath
 
@@ -156,6 +167,7 @@ def main(argv):
     # Call toolpath.calculate_path() to scrap the existing and regenerate toolpath.
 
     display_outline(shape)
+    display_entry_point(toolpath)
     #display_starting_circle(toolpath)
     display_toolpath(toolpath)
     display_voronoi(toolpath)

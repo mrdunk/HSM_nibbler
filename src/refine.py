@@ -14,7 +14,6 @@ from shapely.geometry import MultiPolygon, Point, Polygon
 import dxf
 import geometry
 
-
 def display_start_point(toolpath, colour="purple"):
     plt.plot(toolpath.start_point.x, toolpath.start_point.y, marker='o', c=colour, markersize=10)
 
@@ -95,10 +94,8 @@ def generate_tool_path(shapes, step_size, inner=True):
                 #geometry.ArcDir.CW,
                 already_cut=already_cut,
                 generate=True,
-                #starting_point=Point(0, -28),
-               # starting_point=Point(-23, 20),
-                #starting_point=Point(-23, 0),
-                #starting_point=Point(-20.93476, 0),
+                #starting_point=Point(-23, 20),
+                starting_radius=3.5,
                 debug=True)
     else:
         already_cut = Polygon()
@@ -118,6 +115,7 @@ def generate_tool_path(shapes, step_size, inner=True):
                 generate=True,
                 starting_point_tactic = geometry.StartPointTactic.PERIMITER,
                 #starting_point=Point(0, 42.5),
+                starting_radius=0.5,
                 debug=True)
 
     display_outline(already_cut)
