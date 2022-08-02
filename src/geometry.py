@@ -523,11 +523,15 @@ class BaseGeometry:
         return split_arcs
 
 
-class BasePocket(BaseGeometry):
+class Pocket(BaseGeometry):
     """
     A CAM library to generate a HSM "peeling" pocketing toolpath.
     """
 
+    start_point: Point
+    max_starting_radius: float
+    starting_radius_clear: Optional[bool]
+    starting_angle: Optional[float] = None
     last_arc: Optional[ArcData]
     last_circle: Optional[ArcData]
     start_point: Point
@@ -538,20 +542,86 @@ class BasePocket(BaseGeometry):
             to_cut: Polygon,
             step: float,
             winding_dir: ArcDir,
+            already_cut: Polygon = None,
             generate: bool = False,
             voronoi: Optional[VoronoiCenters] = None,
-            already_cut: Polygon = None,
+            starting_point_tactic: StartPointTactic = StartPointTactic.WIDEST,
+            starting_point: Point = None,
+            starting_radius: float = None,
+            do_starting_circle: bool = True,  # TODO: Remove
             debug: bool = False,
     ) -> None:
-        super().__init__(to_cut, step, winding_dir, already_cut=already_cut)
+        """
+        Arguments:
+            to_cut: The area this pocket should cover.
+            step: The distance between cutting path passes.
+            winding_dir: Tactic for choosing clockwise or anticlockwise path sections.
+            already_cut: An area where no cutting path should be generated but
+                also no care needs to be taken when intersecting it. Also rapid moves
+                may pass through it.
+            generate: Whether to use the get_arcs(...) parameter as a generator
+                function (True) or calculate the whole path at the start (False).
+            voronoi: Optionally pass in a voronoi diagram detailing points equidistant
+                from the part edges. If not provided, one will be created.
+            starting_point_tactic: Tactic used to pick the very start of the cutting
+                path.
+            starting_point: Override the automatically calculated cutting path start point.
+                Must be withing either the `to_cut` area or the `already_cut` area if
+                one was specified.
+            starting_radius: Optionally set the required space at the start_point.
+                Used to make sure an entry helix has enough space at the start_point
+                when machining.
 
-        assert voronoi
-
-        #self.step: float = step
-        #self.winding_dir: ArcDir = winding_dir
+        Properties:
+            start_point: The start of the cutting path. If one is not specified with
+                the starting_point parameter, this will be calculated automatically.
+            max_starting_radius: The maximum radius a circle at start_point could
+                be without overlapping the part's edges.
+            starting_radius_clear: Whether a circle at start_point of the radius set
+                by parameter starting_radius is entirely in the area covered by
+                starting_cut_area. This is used to know if cutting an entry helix is
+                required.
+            starting_angle: `None` if the entry circle is completely within the already_cut
+                area. Otherwise it contains the angle to the start of the cutting path
+                where the entry circle intersects the cutting path.
+        """
+        if already_cut is None:
+            already_cut = Polygon()
+        self.starting_cut_area = already_cut
+        self.starting_radius = starting_radius
         self.generate = generate
-        self.voronoi = voronoi
+        self.do_starting_circle = do_starting_circle
         self.debug = debug
+
+        complete_pocket = self.starting_cut_area.union(to_cut)
+
+        # Calculate voronoi diagram for finding points equidistant between part edges.
+        if voronoi is None:
+            if starting_point is not None:
+                voronoi = VoronoiCenters(complete_pocket, starting_point=starting_point)
+            elif starting_point_tactic == StartPointTactic.WIDEST:
+                voronoi = self._start_point_widest(complete_pocket, already_cut, step)
+            elif starting_point_tactic == StartPointTactic.PERIMETER:
+                voronoi = self._start_point_perimeter(complete_pocket, already_cut, step)
+
+            to_cut = voronoi.polygon  # Remove duplicate points.
+            assert voronoi is not None
+        else:
+            clean_multipolygon(to_cut)
+        self.voronoi = voronoi
+
+        # Calculate entry hole settings.
+        self.max_starting_radius = voronoi.distance_from_geom(voronoi.start_point)
+        self.starting_radius_clear = None
+        if starting_radius and self.max_starting_radius * (step * 1.05) < starting_radius:
+            print(f"Warning: Starting radius of {starting_radius} overlaps boundaries.")
+        if self.starting_radius is not None:
+            radius = min(self.starting_radius, self.max_starting_radius)
+            start_point = voronoi.start_point.buffer(radius)
+            self.starting_radius_clear = start_point.within(already_cut)
+            already_cut = already_cut.union(start_point)
+
+        super().__init__(to_cut, step, winding_dir, already_cut=already_cut)
 
         self._reset()
         self.calculate_path()
@@ -587,26 +657,36 @@ class BasePocket(BaseGeometry):
                 self.dilated_polygon_boundaries.append(
                         ring.buffer(self.step * SKIP_EDGE_ARCS))
 
-        entry_circle = EntryCircle(
-                self.polygon,
-                self.start_point,
-                self.start_radius,
-                self.step,
-                self.winding_dir,
-                already_cut=self.cut_area_total,
-                path=self.path)
-        entry_circle.spiral()
-        entry_circle.circle()
+        if self.do_starting_circle:
+            entry_circle = EntryCircle(
+                    self.polygon,
+                    self.start_point,
+                    self.start_radius,
+                    self.step,
+                    self.winding_dir,
+                    already_cut=self.cut_area_total,
+                    path=self.path)
+            entry_circle.spiral()
+            entry_circle.circle()
 
-        if self.starting_radius is not None:
-            radius = min(self.starting_radius, self.max_starting_radius)
-            if (self.path and
-                    self.start_point.buffer(radius).distance(self.path[0].start) < self.step / 20):
-                dx = self.path[0].start.x - self.start_point.x
-                dy = self.path[0].start.y - self.start_point.y
-                self.starting_angle = math.atan2(dx, dy)
+            if self.starting_radius is not None:
+                radius = min(self.starting_radius, self.max_starting_radius)
+                if (self.path and
+                        self.start_point.buffer(radius).distance(
+                            self.path[0].start) < self.step / 20):
+                    dx = self.path[0].start.x - self.start_point.x
+                    dy = self.path[0].start.y - self.start_point.y
+                    self.starting_angle = math.atan2(dx, dy)
 
-        self.last_arc = entry_circle.last_arc
+            self.last_arc = entry_circle.last_arc
+
+        # Assume starting circle is already cut.
+        self.last_circle: Optional[ArcData] = create_circle(
+            self.start_point, self.start_radius)
+        self.cut_area_total = self.cut_area_total.union(
+                Polygon(self.last_circle.path))
+        self.cut_area_total2 = self.cut_area_total.union(
+                Polygon(self.last_circle.path).buffer(self.step / 2))
 
     def calculate_path(self) -> None:
         """ Reset path and restart from beginning. """
@@ -1084,177 +1164,6 @@ class BasePocket(BaseGeometry):
                 return None
         return arc
 
-
-class OutsidePocket(BasePocket):
-    def __init__(
-            self,
-            polygons: MultiPolygon,
-            material: Union[LinearRing, LineString, Polygon],
-            step: float,
-            winding_dir: ArcDir,
-            generate: bool = False,
-            debug=False,
-    ) -> None:
-
-        polygons = clean_multipolygon(polygons)
-
-        if material.type == "Polygon":
-            self.material = material.exterior
-        else:
-            self.material = LinearRing(material)
-
-        # The space the voronoi diagram needs.
-        # Ideally edges twice as far from the part as the material edge is from the part.
-        # This causes arcs to be truncated at their widest point.
-        pocket_bound = polygons.bounds
-        material_bound = self.material.bounds
-        outer_bound = []
-        for index, (p, m) in enumerate(zip(pocket_bound, material_bound)):
-            padding = m - p
-            if index < 2:
-                padding = min(-4 * step, padding)
-            else:
-                padding = max(4 * step, padding)
-            outer_bound.append(m + padding)
-
-        self.outer_box = box(*outer_bound)
-        padded_polygon = Polygon(self.outer_box)
-        for polygon in polygons.geoms:
-            padded_polygon = padded_polygon.difference(Polygon(polygon.exterior))
-        voronoi = VoronoiCenters(padded_polygon, preserve_edge=True)
-
-        # The shape to be cut.
-        material_minus_polygon = Polygon(self.material)
-        for polygon in polygons.geoms:
-            material_minus_polygon = material_minus_polygon.difference(Polygon(polygon.exterior))
-
-        super().__init__(material_minus_polygon, step, winding_dir, generate, voronoi, debug)
-
-    def _reset(self) -> None:
-        super()._reset()
-
-        self.start_point = self.voronoi.vertex_on_perimiter() or self.voronoi.widest_gap()[0]
-
-        self.last_circle: Optional[ArcData] = None
-        self.cut_area_total = Polygon(self.outer_box)
-        self.cut_area_total = self.cut_area_total.difference(Polygon(self.material))
-        self.cut_area_total2 = Polygon(self.cut_area_total)
-
-
-class OutsidePocketSimple(OutsidePocket):
-    def __init__(
-            self,
-            polygon: Polygon,
-            step: float,
-            winding_dir: ArcDir,
-            generate: bool = False,
-    ) -> None:
-        interiors = []
-        for interior in polygon.interiors:
-            interiors.append(Polygon(interior))
-        polygons = MultiPolygon(interiors)
-        material = polygon.exterior
-        super().__init__(polygons, material, step, winding_dir, generate)
-
-
-class Pocket(BasePocket):
-    """
-    Calculate HSM path for pocket where some of the pocket has already been cleared.
-    """
-    start_point: Point
-    starting_cut_area: Polygon
-    max_starting_radius: float
-    starting_radius_clear: Optional[bool]
-    starting_angle: Optional[float] = None
-
-    def __init__(
-            self,
-            to_cut: Polygon,
-            step: float,
-            winding_dir: ArcDir,
-            already_cut: Polygon = None,
-            generate: bool = False,
-            voronoi: Optional[VoronoiCenters] = None,
-            starting_point_tactic: StartPointTactic = StartPointTactic.WIDEST,
-            starting_point: Point = None,
-            starting_radius: float = None,
-            debug=False,
-    ) -> None:
-        """
-        Arguments:
-            to_cut: The area this pocket should cover.
-            step: The distance between cutting path passes.
-            winding_dir: Tactic for choosing clockwise or anticlockwise path sections.
-            already_cut: An area where no cutting path should be generated but
-                also no care needs to be taken when intersecting it. Also rapid moves
-                may pass through it.
-            generate: Whether to use the get_arcs(...) parameter as a generator
-                function (True) or calculate the whole path at the start (False).
-            voronoi: Optionally pass in a voronoi diagram detailing points equidistant
-                from the part edges. If not provided, one will be created.
-            starting_point_tactic: Tactic used to pick the very start of the cutting
-                path.
-            starting_point: Override the automatically calculated cutting path start point.
-                Must be withing either the `to_cut` area or the `already_cut` area if
-                one was specified.
-            starting_radius: Optionally set the required space at the start_point.
-                Used to make sure an entry helix has enough space at the start_point
-                when machining.
-
-        Properties:
-            start_point: The start of the cutting path. If one is not specified with
-                the starting_point parameter, this will be calculated automatically.
-            max_starting_radius: The maximum radius a circle at start_point could
-                be without overlapping the part's edges.
-            starting_radius_clear: Whether a circle at start_point of the radius set
-                by parameter starting_radius is entirely in the area covered by
-                starting_cut_area. This is used to know if cutting an entry helix is
-                required.
-            starting_angle: `None` if the entry circle is completely within the already_cut
-                area. Otherwise it contains the angle to the start of the cutting path
-                where the entry circle intersects the cutting path.
-        """
-        if already_cut is None:
-            already_cut = Polygon()
-        self.starting_cut_area = already_cut
-        self.starting_radius = starting_radius
-
-        complete_pocket = self.starting_cut_area.union(to_cut)
-
-        if voronoi is None:
-            if starting_point is not None:
-                voronoi = VoronoiCenters(complete_pocket, starting_point=starting_point)
-            elif starting_point_tactic == StartPointTactic.WIDEST:
-                voronoi = self._start_point_widest(complete_pocket, already_cut, step)
-            elif starting_point_tactic == StartPointTactic.PERIMETER:
-                voronoi = self._start_point_perimeter(complete_pocket, already_cut, step)
-        assert voronoi is not None
-
-        clean_polygon: Polygon = voronoi.polygon  # Remove duplicate points.
-
-        self.max_starting_radius = voronoi.distance_from_geom(voronoi.start_point)
-        self.starting_radius_clear = None
-        if starting_radius and self.max_starting_radius * (step * 1.05) < starting_radius:
-            print(f"Warning: Starting radius of {starting_radius} overlaps boundaries.")
-        if self.starting_radius is not None:
-            radius = min(self.starting_radius, self.max_starting_radius)
-            start_point = voronoi.start_point.buffer(radius)
-            self.starting_radius_clear = start_point.within(already_cut)
-            already_cut = already_cut.union(start_point)
-
-        super().__init__(clean_polygon, step, winding_dir, generate, voronoi, already_cut, debug)
-
-    def _reset(self) -> None:
-        super()._reset()
-
-        # Assume starting circle is already cut.
-        self.last_circle: Optional[ArcData] = create_circle(
-            self.start_point, self.start_radius)
-        self.cut_area_total = self.starting_cut_area.union(
-                Polygon(self.last_circle.path))
-        self.cut_area_total2 = self.starting_cut_area.union(
-                Polygon(self.last_circle.path).buffer(self.step / 2))
-
     def _start_point_widest(
             self, polygons: MultiPolygon, already_cut: Polygon, step: float) -> VoronoiCenters:
         """
@@ -1312,8 +1221,44 @@ class Pocket(BasePocket):
         return voronoi
 
 
-class InsidePocket(Pocket):
-    pass
+class OutsidePocketSimple(Pocket):
+    """
+    For old branch of DerpCAM compatibility.
+    TODO: Remove this class.
+    """
+    def __init__(
+            self,
+            polygon: Polygon,
+            step: float,
+            winding_dir: ArcDir,
+            generate: bool = False,
+    ) -> None:
+        outer_bound = []
+        for index, (p, m) in enumerate(zip(polygon.bounds, polygon.exterior.bounds)):
+            padding = m - p
+            if index < 2:
+                padding = min(-4 * step, padding)
+            else:
+                padding = max(4 * step, padding)
+            outer_bound.append(m + padding)
+        outer_box = box(*outer_bound)
+
+        to_cut = Polygon(outer_box)
+        for interior in polygon.interiors:
+            to_cut = to_cut.difference(Polygon(interior))
+
+        already_cut = Polygon(outer_box)
+        already_cut = already_cut.difference(Polygon(polygon.exterior))
+
+        super().__init__(
+                to_cut,
+                step,
+                winding_dir,
+                already_cut=already_cut,
+                generate=True,
+                starting_point_tactic=StartPointTactic.PERIMETER,
+                do_starting_circle=False,
+                debug=True)
 
 
 class EntryCircle(BaseGeometry):

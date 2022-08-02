@@ -116,6 +116,11 @@ def main(argv):
     for shape in shapes.geoms:
         already_cut = already_cut.difference(Polygon(shape.exterior))
 
+    #toolpath = geometry.OutsidePocketSimple(
+    #        shapes[0],
+    #        step_size,
+    #        geometry.ArcDir.Closest,
+    #        generate=True)
     toolpath = geometry.Pocket(
             shapes,
             step_size,
