@@ -1,9 +1,22 @@
 """
-A wrapper for pyvoronoi that calculates the paths along the center of polygon
-data. Any point on the voronoi path will be equidistant to 2 or more polygon edges.
-While pyvoronoi does not natively handle arcs and circles, this wrapper attempts
-to prune voronoi edges that are produces by circles that have been split into
-line segments.
+    A CAM library for generating HSM "peeling" toolpaths from supplied geometry.
+
+    Copyright (C) <2022>  <duncan law>
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    mrdunk@gmail.com
 """
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -41,6 +54,14 @@ def round_coord(value: Tuple[float, float], dp: int = ROUND_DP) -> Tuple[float, 
 
 
 class VoronoiCenters:
+    """
+    A wrapper for pyvoronoi that calculates midpoints equidistant to 2 or more polygon
+    edges.
+    While pyvoronoi does not natively handle arcs and circles, this wrapper attempts
+    to prune voronoi edges that are produced by arcs that have been split into line
+    segments.
+    """
+
     def __init__(
             self,
             polygon: Polygon,
