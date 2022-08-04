@@ -63,6 +63,8 @@ class VoronoiCenters:
                 be approximately the same as the maximum expected jitter in
                 geometry coordinates.
         """
+        assert polygon
+
         self.polygon = polygon
         self._validate_poly()
         self.tolerence = tolerence

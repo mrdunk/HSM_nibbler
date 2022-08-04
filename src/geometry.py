@@ -1289,7 +1289,7 @@ class EntryCircle(BaseGeometry):
         loop: float = 0.25
         offset: List[float] = [0.0, 0.0]
         new_arcs = []
-        while loop * self.step <= self.radius + self.step / 4:
+        while loop * self.step <= self.radius:
             orientation = round(loop * 4) % 4
             if orientation == 0:
                 start_angle = 0
