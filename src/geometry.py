@@ -1189,9 +1189,8 @@ class Pocket(BaseGeometry):
         """
         Recalculate the start point to be inside the cut area, adjacent to the perimeter.
         """
+        starting_radius = self.starting_radius or step
         voronoi = VoronoiCenters(polygons, preserve_edge=True)
-        if self.starting_radius is None:
-            return voronoi
 
         perimiter_point = voronoi.start_point
         assert perimiter_point is not None
@@ -1199,16 +1198,16 @@ class Pocket(BaseGeometry):
         assert len(voronoi_edge_index) == 1
         voronoi_edge = voronoi.edges[voronoi_edge_index[0]]
         cut_edge_section = already_cut.intersection(voronoi_edge)
-        if cut_edge_section.length > self.starting_radius * 2:
+        if cut_edge_section.length > starting_radius * 2:
             cut_edge__0 = Point(cut_edge_section.coords[0])
             cut_edge__1 = Point(cut_edge_section.coords[1])
 
             if (cut_edge__0.distance(perimiter_point) < cut_edge__1.distance(perimiter_point)):
                 new_start_point = Point(round_coord(
-                    cut_edge_section.interpolate(self.starting_radius).coords[0]))
+                    cut_edge_section.interpolate(starting_radius).coords[0]))
             else:
                 new_start_point = Point(round_coord(
-                    cut_edge_section.interpolate(-self.starting_radius).coords[0]))
+                    cut_edge_section.interpolate(-starting_radius).coords[0]))
 
             voronoi = VoronoiCenters(polygons, starting_point=new_start_point)
         else:

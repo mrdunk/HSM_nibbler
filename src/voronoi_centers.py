@@ -538,7 +538,7 @@ class VoronoiCenters:
                     closest_edge = edge
                     new_vertex = proposed_new_vertex
                     new_edge = proposed_new_edge
-      
+
         assert closest_edge_index is not None
 
         # Add the new vertex on the voronoi graph.
@@ -551,7 +551,7 @@ class VoronoiCenters:
         if new_edge_2.length > 0:
             self._store_edge(new_edge_2)
 
-        # New vertex 
+        # New vertex
         if new_edge is None or new_edge.length == 0:
             assert point.equals(Point(new_vertex))
             self.start_point = Point(new_vertex)
