@@ -29,7 +29,7 @@ of endmill damage.
 ![Example path](/images/longneck.png)
 
 ## How to use this library
-See `./examples/` directory.
+See `demo.py` file.
 
 ## Projects using this library
 - [DerpCAM](https://github.com/kfoltman/DerpCAM) A 2.5D CAM aimed at hobby CNC machine users.
