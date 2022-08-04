@@ -511,7 +511,7 @@ class BaseGeometry:
             new_arcs = arcs_from_circle_diff(full_arc, self.cut_area_total)
             if not new_arcs:
                 continue
-            new_arcs = [complete_arc(new_arc) for new_arc in new_arcs]
+            new_arcs = [complete_arc(new_arc) for new_arc in new_arcs if new_arc.path.length]
 
             arc_set = set()
             for new_arc_index, new_arc in enumerate(new_arcs):
@@ -685,7 +685,7 @@ class Pocket(BaseGeometry):
             self.start_point, self.start_radius)
         self.cut_area_total = self.cut_area_total.union(
                 Polygon(self.last_circle.path))
-        self.cut_area_total2 = self.cut_area_total.union(
+        self.cut_area_total2 = self.cut_area_total2.union(
                 Polygon(self.last_circle.path).buffer(self.step / 2))
 
     def calculate_path(self) -> None:
