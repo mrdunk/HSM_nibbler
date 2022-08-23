@@ -20,7 +20,7 @@ try:
     from helpers import log  # type: ignore
 except ImportError:
     try:
-        from cam.debug import display
+        from cam.debug import display  # type: ignore
     except ImportError:
         pass
     from cam.voronoi_centers import round_coord, VoronoiCenters  # type: ignore
@@ -138,7 +138,7 @@ def create_arc(
         radius: float,
         start_angle: float,
         span_angle: float,
-        winding_dir: ArcDir) -> ArcData:
+        winding_dir: ArcDir) -> Optional[ArcData]:
     """
     Generate a arc.
 
@@ -295,7 +295,7 @@ class BaseGeometry:
     # Cut area so far, calculated by appending arc segments, dilated by (step / 2).
     cut_area_total2: Polygon
 
-    starting_cut_area: Optional[Polygon] = None
+    starting_cut_area: Polygon
 
     def __init__(
             self,
@@ -309,8 +309,8 @@ class BaseGeometry:
         self.winding_dir: ArcDir = winding_dir
         if already_cut is None:
             already_cut = Polygon()
-        if not self.starting_cut_area:
-            self.starting_cut_area = already_cut
+        self.starting_cut_area = already_cut
+        self.path: List[Union[ArcData, LineData]] = []
 
     def _reset(self) -> None:
         self.pending_arc_queues: List[List[ArcData]] = []
@@ -361,8 +361,7 @@ class BaseGeometry:
             # Just add the arc to the single queue.
             # Since there are no other queues depending on our remaining one,
             # it is safe to drain it,
-            closest_queue = self.pending_arc_queues[0]
-            closest_queue.append(new_arcs[0])
+            self.pending_arc_queues[0].append(new_arcs[0])
             to_process = self.pending_arc_queues.pop(0)
             self._arcs_to_path(to_process)
             return
@@ -378,6 +377,10 @@ class BaseGeometry:
                         combined_dist = 1
                         seperate_dist = 0
                     else:
+                        assert arc.start is not None
+                        assert queue[-1].start is not None
+                        assert queue[-1].end is not None
+
                         seperate_dist = (
                                 queue[-1].start.distance(queue[-1].end) + arc.start.distance(arc.end))
                         combined_dist = (
@@ -436,12 +439,18 @@ class BaseGeometry:
                     else:
                         winding_dir = ArcDir.CCW
 
+                    assert self.last_arc.start is not None
+                    assert self.last_arc.end is not None
+
                     if self.last_arc.end.distance(arc.start) < self.last_arc.end.distance(arc.end):
                         winding_dir = ArcDir.CW
                     if self.last_arc.start.distance(arc.end) < self.last_arc.end.distance(arc.end):
                         winding_dir = ArcDir.CW
-                        
-                arc = complete_arc(arc, winding_dir)
+
+                arc_ = complete_arc(arc, winding_dir)
+                if arc_ is None:
+                    continue
+                arc = arc_
 
             assert arc.path.length > 0
             assert len(arc.path.coords) >= 2
@@ -518,7 +527,7 @@ class BaseGeometry:
             new_arcs = arcs_from_circle_diff(full_arc, self.cut_area_total)
             if not new_arcs:
                 continue
-            new_arcs = [complete_arc(new_arc) for new_arc in new_arcs if new_arc.path.length]
+            new_arcs = list(filter(None, [complete_arc(new_arc) for new_arc in new_arcs if new_arc.path.length]))
 
             arc_set = set()
             for new_arc_index, new_arc in enumerate(new_arcs):
@@ -540,7 +549,6 @@ class Pocket(BaseGeometry):
     starting_angle: Optional[float] = None
     last_arc: Optional[ArcData]
     last_circle: Optional[ArcData]
-    start_point: Point
     debug: bool = False
 
     def __init__(
@@ -648,8 +656,6 @@ class Pocket(BaseGeometry):
         self.visited_edges: Set[int] = set()
         self.open_paths: Dict[int, Tuple[float, float]] = {}
 
-        self.path: List[Union[ArcData, LineData]] = []
-
         self.path_len_progress: float = 0.0
         self.path_len_total: float = 0.0
         for edge in self.voronoi.edges.values():
@@ -682,6 +688,7 @@ class Pocket(BaseGeometry):
                 if (self.path and
                         self.start_point.buffer(radius).distance(
                             self.path[0].start) < self.step / 20):
+                    assert self.path[0].start
                     dx = self.path[0].start.x - self.start_point.x
                     dy = self.path[0].start.y - self.start_point.y
                     self.starting_angle = math.atan2(dx, dy)
@@ -1265,6 +1272,12 @@ class OutsidePocketSimple(Pocket):
 
 
 class EntryCircle(BaseGeometry):
+    center: Point
+    radius: float
+    start_angle: float
+    path: List[Union[ArcData, LineData]]
+    cut_area_total2 = Polygon
+
     def __init__(
             self,
             to_cut: Polygon,
@@ -1274,16 +1287,16 @@ class EntryCircle(BaseGeometry):
             winding_dir: ArcDir,
             start_angle: float = 0,
             already_cut: Optional[Polygon] = None,
-            path: Optional[List[ArcData]] = None) :
+            path: Optional[List[Union[ArcData, LineData]]] = None) :
         super().__init__(to_cut, step, winding_dir, already_cut)
 
         self.center = center
         self.radius = radius
         self.start_angle = start_angle
 
+        if path is None:
+            path = []
         self.path = path
-        if self.path is None:
-            self.path: List[ArcData] = []
 
         self.cut_area_total2 = self.starting_cut_area.buffer(self.step / 2)
 
