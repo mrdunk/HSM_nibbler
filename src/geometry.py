@@ -4,8 +4,6 @@ A CAM library for generating HSM "peeling" toolpaths from supplied geometry.
 
 # pylint: disable=attribute-defined-outside-init
 
-ALLOW_DEBUG = True
-
 from typing import Dict, Generator, List, NamedTuple, Optional, Set, Tuple, Union
 
 from enum import Enum
@@ -24,7 +22,7 @@ except ImportError:
     try:
         from cam.debug import display
     except ImportError:
-        ALLOW_DEBUG = False
+        pass
     from cam.voronoi_centers import round_coord, VoronoiCenters  # type: ignore
     from cam.helpers import log  # type: ignore
 
@@ -539,7 +537,6 @@ class Pocket(BaseGeometry):
 
     start_point: Point
     max_starting_radius: float
-    starting_radius_clear: Optional[bool]
     starting_angle: Optional[float] = None
     last_arc: Optional[ArcData]
     last_circle: Optional[ArcData]
@@ -586,9 +583,6 @@ class Pocket(BaseGeometry):
                 the starting_point parameter, this will be calculated automatically.
             max_starting_radius: The maximum radius a circle at start_point could
                 be without overlapping the part's edges.
-            starting_radius_clear: Whether a circle of radius starting_radius at
-                start_point fits in the area covered by starting_cut_area.
-                This is used to know if cutting an entry helix is required.
             starting_angle: `None` if the entry circle is completely within the already_cut
                 area. Otherwise it contains the angle to the start of the cutting path
                 where the entry circle intersects the cutting path.
@@ -624,7 +618,6 @@ class Pocket(BaseGeometry):
 
         # Calculate entry hole settings.
         self.max_starting_radius = voronoi.distance_from_geom(voronoi.start_point)
-        self.starting_radius_clear = None
         if starting_radius and self.max_starting_radius < starting_radius:
             print(f"Warning: Starting radius of {starting_radius} overlaps boundaries "
                   f"at {voronoi.start_point}")
@@ -632,10 +625,11 @@ class Pocket(BaseGeometry):
         if self.starting_radius is not None:
             radius = min(self.starting_radius, self.max_starting_radius)
             start_circle = voronoi.start_point.buffer(radius)
-            self.starting_radius_clear = start_circle.within(self.starting_cut_area)
             self.starting_cut_area = self.starting_cut_area.union(start_circle)
 
         super().__init__(to_cut, step, winding_dir, already_cut=self.starting_cut_area)
+
+        # display(polygons=[self.starting_cut_area, to_cut], voronoi=self.voronoi)
 
         self._reset()
         self.calculate_path()

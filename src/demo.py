@@ -88,7 +88,7 @@ def display_entry_point(toolpath):
     x, y = starting_circle.xy
 
     colour = "red"
-    if toolpath.starting_radius_clear:
+    if toolpath.max_starting_radius >= toolpath.starting_radius:
         colour = "green"
 
     plt.plot(x, y, linestyle=':', c=colour, linewidth=2)
