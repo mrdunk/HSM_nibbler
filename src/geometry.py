@@ -16,14 +16,16 @@ from shapely.ops import linemerge, split, unary_union  # type: ignore
 
 try:
     from debug import display
-    from voronoi_centers import round_coord, VoronoiCenters  # type: ignore
+    from voronoi_centers import (
+            round_coord, start_point_perimeter, start_point_widest, VoronoiCenters)  # type: ignore
     from helpers import log  # type: ignore
 except ImportError:
     try:
         from cam.debug import display  # type: ignore
     except ImportError:
         pass
-    from cam.voronoi_centers import round_coord, VoronoiCenters  # type: ignore
+    from cam.voronoi_centers import (  # type: ignore
+            round_coord, start_point_perimeter, start_point_widest, VoronoiCenters)
     from cam.helpers import log  # type: ignore
 
 # Filter arcs that are entirely within this distance of a pocket edge.
@@ -617,15 +619,17 @@ class Pocket(BaseGeometry):
             if starting_point is not None:
                 voronoi = VoronoiCenters(complete_pocket, starting_point=starting_point)
             elif starting_point_tactic == StartPointTactic.WIDEST:
-                voronoi = self._start_point_widest(complete_pocket, self.starting_cut_area, step)
+                voronoi = start_point_widest(
+                        self.starting_radius, step, complete_pocket, self.starting_cut_area)
             elif starting_point_tactic == StartPointTactic.PERIMETER:
-                voronoi = self._start_point_perimeter(complete_pocket, self.starting_cut_area, step)
+                voronoi = start_point_perimeter(
+                        self.starting_radius or step, complete_pocket, self.starting_cut_area)
 
             assert voronoi is not None
         self.voronoi = voronoi
 
         # Calculate entry hole settings.
-        self.max_starting_radius = voronoi.distance_from_geom(voronoi.start_point)
+        self.max_starting_radius = voronoi.max_starting_radius
         if starting_radius and self.max_starting_radius < starting_radius:
             print(f"Warning: Starting radius of {starting_radius} overlaps boundaries "
                   f"at {voronoi.start_point}")
@@ -1182,26 +1186,6 @@ class Pocket(BaseGeometry):
                 return None
 
         return arc
-
-    def _start_point_widest(
-            self, polygons: MultiPolygon, already_cut: Polygon, step: float) -> VoronoiCenters:
-        """
-        Recalculate the start point to be in the widest space, furthest from any
-        part edge.
-        """
-        voronoi = VoronoiCenters(polygons, preserve_widest=True)
-        start = voronoi.start_point
-        if self.starting_radius:
-            start = start.buffer(self.starting_radius)
-        if already_cut and not start.within(already_cut.buffer(-step / 2)):
-            # Start point outside cut area.
-            # Generate a voronoi diagram of just the cut area and take the
-            # start point from that.
-            cut_voronoi = VoronoiCenters(already_cut, preserve_widest=True)
-            voronoi = VoronoiCenters(polygons, starting_point=cut_voronoi.start_point)
-            del cut_voronoi
-
-        return voronoi
 
     def _start_point_perimeter(
             self, polygons: MultiPolygon, already_cut: Polygon, step: float) -> VoronoiCenters:

@@ -41,7 +41,7 @@ def display_voronoi(toolpath, colour="red"):
         plt.plot(x[-1], y[-1], 'x', c=colour)
 
 def display_visited_voronoi_edges(toolpath, colour="black"):
-    """ 
+    """
     Display the voronoi edges that were used to calculate cut geometry.
     This should match the output of display_voronoi(...).
     """

@@ -45,9 +45,10 @@ def round_coord(value: Tuple[float, float], dp: int = ROUND_DP) -> Tuple[float, 
 
 
 class VoronoiCenters:
-    #start_point: Optional[Point] = None
-    #start_distance: Optional[float] = None
-
+    """
+    Generate a voronoi diagram inside a polygon.
+    The diagram's edges will be equidistant from the polygon's nearest edges.
+    """
     def __init__(
             self,
             polygon: Polygon,
@@ -195,6 +196,8 @@ class VoronoiCenters:
 
         self._split_on_pocket_edge()
         self._combine_edges(preserve)
+
+        self.max_starting_radius = self.distance_from_geom(self.start_point)
 
         self._check_data()
 
@@ -568,4 +571,90 @@ class VoronoiCenters:
         self.start_distance = self.distance_from_geom(point)
         return
 
+
+def start_point_widest(
+        desired_radius: Optional[float],
+        step: float,
+        pocket: BaseGeometry,
+        already_cut: Optional[Polygon] = None
+        ) -> VoronoiCenters:
+    """
+    Calculate voronoi diagram with the start point to be in the widest space,
+    furthest from any part edge.
+    Used when performing pocketing machining operations when cuts should start
+    in the area with the most material to be removed. IE: furthest from the part
+    perimeter.
+
+    Args:
+        desired_radius: Size of desired starting hole.
+        step: Pocket algorithm's step size. already_cut will be oversizedby this amount.
+        pocket: The area the returned voronoi diagram will be calculated for.
+        already_cut: The area which must contain the starting hole.
+
+    Returns:
+        An instance of VoronoiCenters.
+        Of particular interest are the .start_point and .max_desired_radius parameters.
+    """
+    if already_cut is None:
+        complete_pocket = pocket
+    else:
+        complete_pocket = already_cut.union(pocket)
+
+    voronoi = VoronoiCenters(complete_pocket, preserve_widest=True)
+    start = voronoi.start_point
+    if desired_radius:
+        start = start.buffer(desired_radius)
+    if already_cut and not start.within(already_cut.buffer(-step / 2)):
+        # Start point outside cut area.
+        # Generate a voronoi diagram of just the cut area and take the
+        # start point from that.
+        cut_voronoi = VoronoiCenters(already_cut, preserve_widest=True)
+        voronoi = VoronoiCenters(complete_pocket, starting_point=cut_voronoi.start_point)
+        del cut_voronoi
+
+    return voronoi
+
+
+def start_point_perimeter(
+        desired_radius: float,
+        pocket: BaseGeometry,
+        already_cut: Polygon
+        ) -> VoronoiCenters:
+    """
+    Calculate voronoi diagram with the start point to be inside the cut area,
+    adjacent to the perimeter.
+    Used when performing outer-peel machining operations when cuts start at the
+    outside and work in towards the perimeter of the part.
+
+    Args:
+        desired_radius: Size of desired starting hole.
+        pocket: The area the returned voronoi diagram will be calculated for.
+        already_cut: The area which must contain the starting hole.
+
+    Returns:
+        An instance of VoronoiCenters.
+        Of particular interest are the .start_point and .max_desired_radius parameters.
+    """
+    complete_pocket = already_cut.union(pocket)
+
+    voronoi = VoronoiCenters(complete_pocket, preserve_edge=True)
+
+    perimiter_point = voronoi.start_point
+    assert perimiter_point is not None
+    voronoi_edge_index = voronoi.vertex_to_edges[perimiter_point.coords[0]]
+    assert len(voronoi_edge_index) == 1
+    voronoi_edge = voronoi.edges[voronoi_edge_index[0]]
+    cut_edge_section = already_cut.intersection(voronoi_edge)
+    if cut_edge_section.length > desired_radius * 2:
+        new_start_point = cut_edge_section.interpolate(0.5, normalized=True)
+
+        voronoi = VoronoiCenters(complete_pocket, starting_point=new_start_point)
+    else:
+        # Can't fit desired_radius here.
+        # Look for widest point in already_cut area.
+        cut_voronoi = VoronoiCenters(already_cut, preserve_widest=True)
+        voronoi = VoronoiCenters(complete_pocket, starting_point=cut_voronoi.start_point)
+        del cut_voronoi
+
+    return voronoi
 
