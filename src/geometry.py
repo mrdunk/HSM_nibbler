@@ -127,13 +127,13 @@ def clean_multipolygon(multi: MultiPolygon) -> MultiPolygon:
 
     return MultiPolygon(polygons)
 
-def create_circle(origin: Point, radius: float) -> ArcData:
+def create_circle(origin: Point, radius: float, winding_dir: Optional[ArcDir] = None) -> ArcData:
     """
     Generate a circle that will be split into arcs to be part of the toolpath later.
     """
     span_angle = 2 * math.pi
     return ArcData(
-        origin, radius, None, None, 0, span_angle, None, origin.buffer(radius).boundary, "")
+        origin, radius, None, None, 0, span_angle, winding_dir, origin.buffer(radius).boundary, "")
 
 def create_arc(
         origin: Point,
@@ -153,6 +153,8 @@ def create_arc(
     if radius == 0:
         return None
 
+    start_angle = start_angle % (2 * math.pi)
+
     circle_path = origin.buffer(radius).boundary
 
     line_up = LineString([origin, Point(origin.x, origin.y + radius * 2)])
@@ -164,30 +166,57 @@ def create_arc(
     arc_paths = split(circle_path, right_border).geoms[0]
 
     arc_paths = rotate(arc_paths, -start_angle, origin=origin, use_radians=True)
-    if winding_dir == ArcDir.CCW:
-        arc_paths = LineString([(-point[0], point[1]) for point in arc_paths.coords])
-    return ArcData(origin, radius, None, None, start_angle, span_angle, winding_dir, arc_paths, "")
+    return ArcData(
+            origin,
+            radius,
+            Point(arc_paths.coords[0]),
+            Point(arc_paths.coords[-1]),
+            start_angle,
+            span_angle,
+            winding_dir,
+            arc_paths,
+            "")
 
 def create_arc_from_path(
         origin: Point,
         path: LineString,
         radius: float,
+        winding_dir: Optional[ArcDir] = None,
         debug: str = None
 ) -> ArcData:
     """
     Save data for the arc sections of the path.
     """
-    start = None
-    end = None
+    start = path.coords[0]
+    end = path.coords[0]
     start_angle = None
     span_angle = None
-    winding_dir = None
 
     return ArcData(origin, radius, start, end, start_angle, span_angle, winding_dir, path, debug)
 
+def mirror_arc(
+        arc_data: ArcData,
+        winding_dir: ArcDir
+        ) -> ArcData:
+    """
+    Mirror X axis of an arc about the origin point.
+    """
+    arc_paths = LineString([(-point[0], point[1]) for point in arc_data.path.coords][::-1])
+    origin = Point(-arc_data.origin.x, arc_data.origin.y)
+    return ArcData(
+            origin,
+            arc_data.radius,
+            Point(arc_paths.coords[0]),
+            Point(arc_paths.coords[-1]),
+            -arc_data.start_angle % (math.pi * 2),
+            -arc_data.span_angle,
+            winding_dir,
+            arc_paths,
+            arc_data.debug)
+
 def complete_arc(
         arc_data: ArcData,
-        winding_dir: ArcDir = ArcDir.CW
+        winding_dir_: ArcDir = None
         ) -> Optional[ArcData]:
     """
     Calculate start_angle, span_angle and radius.
@@ -195,6 +224,9 @@ def complete_arc(
     This is called a lot so any optimizations here save us time.
     Given some properties of an arc, calculate the others.
     """
+    winding_dir = winding_dir_
+    if winding_dir is None or winding_dir == ArcDir.Closest:
+        winding_dir = ArcDir.CW
 
     # Make copy of path since we may need to modify it.
     path = LineString(arc_data.path)
@@ -228,7 +260,7 @@ def complete_arc(
     if winding_dir == ArcDir.CW:
         span_angle = (end_angle - start_angle) % (2 * math.pi)
     elif winding_dir == ArcDir.CCW:
-        span_angle = -((start_angle - end_angle) % (2 * math.pi))
+        span_angle = (-(start_angle - end_angle) % (2 * math.pi)) - (2 * math.pi)
 
     if span_angle == 0.0:
         span_angle = 2 * math.pi
@@ -240,7 +272,7 @@ def complete_arc(
             radius,
             Point(start_coord),
             Point(end_coord),
-            start_angle,
+            start_angle % (2 * math.pi),
             span_angle,
             winding_dir,
             path,
@@ -269,7 +301,9 @@ def arcs_from_circle_diff(
     arcs = []
     assert circle.radius is not None
     for arc in line_diff.geoms:
-        arcs.append(create_arc_from_path(circle.origin, arc, circle.radius, debug=debug))
+        arcs.append(create_arc_from_path(
+            circle.origin, arc, circle.radius, winding_dir=circle.winding_dir, debug=debug))
+            #circle.origin, arc, circle.radius, debug=debug))
     return arcs
 
 
@@ -529,7 +563,11 @@ class BaseGeometry:
             new_arcs = arcs_from_circle_diff(full_arc, self.cut_area_total)
             if not new_arcs:
                 continue
-            new_arcs = list(filter(None, [complete_arc(new_arc) for new_arc in new_arcs if new_arc.path.length]))
+
+            new_arcs = list(filter(
+                None, [
+                    complete_arc(new_arc, new_arc.winding_dir)
+                    for new_arc in new_arcs if new_arc.path.length]))
 
             arc_set = set()
             for new_arc_index, new_arc in enumerate(new_arcs):
@@ -953,7 +991,7 @@ class Pocket(BaseGeometry):
             # Propose an arc.
             pos, radius = self._arc_at_distance(
                 distance + dist_offset, edge_extended)
-            circle = create_circle(pos, radius)
+            circle = create_circle(pos, radius, self.winding_dir)
 
             # Compare proposed arc to cut area.
             # We are only interested in sections that have not been cut yet.
@@ -1014,7 +1052,7 @@ class Pocket(BaseGeometry):
             progress = best_progress
             pos, radius = self._arc_at_distance(
                 distance + dist_offset, edge_extended)
-            circle = create_circle(Point(pos), radius)
+            circle = create_circle(Point(pos), radius, self.winding_dir)
             arcs = self._split_arcs([circle])
 
         if count == ITERATION_COUNT and self.debug:
@@ -1321,8 +1359,25 @@ class EntryCircle(BaseGeometry):
             new_arcs.append(new_arc)
 
             loop += 0.25  # 1/4 turn.
+        if self.winding_dir == ArcDir.CCW:
+            new_arcs = [mirror_arc(new_arc, self.winding_dir) for new_arc in new_arcs]
+        #for new_arc in new_arcs:
+        #    print(
+        #            new_arc.winding_dir,
+        #            new_arc.start_angle / math.pi, new_arc.span_angle / math.pi,
+        #            new_arc.start, new_arc.end)
+
         sorted_arcs = self._split_arcs(new_arcs)
+
+        #print()
+        #for new_arc in sorted_arcs:
+        #    print(
+        #            new_arc.winding_dir,
+        #            new_arc.start_angle / math.pi, new_arc.span_angle / math.pi,
+        #            new_arc.start, new_arc.end)
+        
         self._queue_arcs(sorted_arcs)
+        #self._queue_arcs(new_arcs)
         self._flush_arc_queues()
 
     def circle(self):
