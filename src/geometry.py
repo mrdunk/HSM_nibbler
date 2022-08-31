@@ -703,9 +703,11 @@ class Pocket(BaseGeometry):
 
         super().__init__(to_cut, step, winding_dir, already_cut=self.starting_cut_area)
 
-        # display(polygons=[self.starting_cut_area, to_cut], voronoi=self.voronoi)
-
         self._reset()
+
+        display(polygons=[self.starting_cut_area, to_cut, self.dilated_polygon],
+                voronoi=self.voronoi)
+
         self.calculate_path()
 
     def _reset(self) -> None:
