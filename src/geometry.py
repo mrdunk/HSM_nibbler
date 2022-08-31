@@ -220,9 +220,8 @@ def mirror_arc(
     arc_path = LineString(
             [((2 * x_line - point[0]), point[1]) for point in arc_data.path.coords]
             )
-    origin = Point(-arc_data.origin.x, arc_data.origin.y)
     return ArcData(
-            origin,
+            arc_data.origin,
             arc_data.radius,
             Point(arc_path.coords[0]),
             Point(arc_path.coords[-1]),
@@ -1385,10 +1384,10 @@ class EntryCircle(BaseGeometry):
                 # Spiral has crossed bounding circle.
                 masked_arc = new_arc.path.intersection(mask)
                 new_arc = create_arc_from_path(
-                        new_arc.origin, masked_arc, new_arc.radius, new_arc.winding_dir)
+                        new_arc.origin, masked_arc, new_arc.radius, ArcDir.CW)
                 new_arc = complete_arc(new_arc, new_arc.winding_dir)
 
-                #not_done = False
+                not_done = False
 
             if self.winding_dir == ArcDir.CCW:
                 new_arc = mirror_arc(self.center.x, new_arc)
