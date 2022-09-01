@@ -13,6 +13,44 @@ import geometry
 
 ACCURACY = 0.05
 
+
+class BaseTests(unittest.TestCase):
+    def verify_arc(self, arc):
+        self.verify_arc_points(arc)
+        self.verify_arc_angles(arc)
+
+    def verify_arc_points(self, arc):
+        self.assertIsNotNone(arc.radius)
+        self.assertIsNotNone(arc.start)
+        self.assertIsNotNone(arc.end)
+        self.assertIsNotNone(arc.start_angle)
+        self.assertIsNotNone(arc.span_angle)
+        self.assertIsNotNone(arc.winding_dir)
+        self.assertIsNotNone(arc.path)
+
+        self.assertEqual(arc.start, Point(arc.path.coords[0]))
+        self.assertEqual(arc.end, Point(arc.path.coords[-1]))
+
+        for point in arc.path.coords:
+            self.assertAlmostEqual(arc.radius, arc.origin.distance(Point(point)))
+
+        self.assertAlmostEqual(arc.path.length, arc.radius * abs(arc.span_angle), places=1)
+
+    def verify_arc_angles(self, arc):
+        start_angle_observed = math.atan2(arc.start.x - arc.origin.x, arc.start.y - arc.origin.y)
+        start_angle_observed = start_angle_observed % (math.pi * 2)
+        end_angle_observed = math.atan2(arc.end.x - arc.origin.x, arc.end.y - arc.origin.y)
+        end_angle_observed = end_angle_observed % (math.pi * 2)
+
+        self.assertEqual(start_angle_observed, arc.start_angle)
+        self.assertAlmostEqual(end_angle_observed, (arc.start_angle + arc.span_angle) % (2 * math.pi))
+
+        if arc.winding_dir == geometry.ArcDir.CW:
+            self.assertGreater(arc.span_angle, 0)
+        elif arc.winding_dir == geometry.ArcDir.CCW:
+            self.assertLess(arc.span_angle, 0)
+
+
 class TestCircle(unittest.TestCase):
     def test_create(self):
         """ Check circles are create in a sane way. """
@@ -35,7 +73,7 @@ class TestCircle(unittest.TestCase):
         length_to_mid = LineString([circle.path.coords[0], mid_point]).length
         self.assertEqual(length_to_mid, 2 * radius)
 
-class TestCreateArc(unittest.TestCase):
+class TestCreateArc(BaseTests):
     def test_create_cw(self):
         """ Check create_arc() method works in a sane way for ClockWise arcs. """
         origin = Point(10, 10)
@@ -46,24 +84,7 @@ class TestCreateArc(unittest.TestCase):
 
         arc = geometry.create_arc(origin, radius, start_angle, span_angle, winding_dir)
 
-        # For CW arcs, span_angle should be positive.
-        self.assertGreater(arc.span_angle, 0)
-
-        self.assertEqual(arc.start, Point(arc.path.coords[0]))
-        self.assertEqual(arc.end, Point(arc.path.coords[-1]))
-
-        # Length of path close to accurate.
-        path_len = math.pi * 2 * radius / 4  # 1/4 of a circle.
-        self.assertLess(abs(path_len - arc.path.length), path_len / 1000)
-
-        # Angle from origin to arc.start matches start_angle.
-        start_angle_observed = math.atan2(arc.start.x - origin.x, arc.start.y - origin.y)
-        start_angle_observed = start_angle_observed % (math.pi * 2)
-        end_angle_observed = math.atan2(arc.end.x - origin.x, arc.end.y - origin.y)
-        end_angle_observed = end_angle_observed % (math.pi * 2)
-
-        self.assertEqual(start_angle_observed, start_angle)
-        self.assertEqual(end_angle_observed, start_angle + span_angle)
+        self.verify_arc(arc)
 
     def test_create_ccw(self):
         """ Check create_arc() method works in a sane way for CounterClockWise arcs. """
@@ -75,57 +96,34 @@ class TestCreateArc(unittest.TestCase):
 
         arc = geometry.create_arc(origin, radius, start_angle, span_angle, winding_dir)
 
-        # For CCW arcs, span_angle should be negative.
-        self.assertLess(arc.span_angle, 0)
+        self.verify_arc(arc)
 
-        self.assertEqual(arc.start, Point(arc.path.coords[0]))
-        self.assertEqual(arc.end, Point(arc.path.coords[-1]))
+    def test_create_cw_full_circle(self):
+        """ Check create_arc() method works in a sane way for CounterClockWise arcs. """
+        origin = Point(10, 10)
+        radius = 5
+        start_angle = 0
+        span_angle = math.pi * 2
+        winding_dir = geometry.ArcDir.CW
 
-        # Length of path close to accurate.
-        path_len = math.pi * 2 * radius / 8  # 1/4 of a circle.
-        self.assertLess(abs(path_len - arc.path.length), path_len / 1000)
+        arc = geometry.create_arc(origin, radius, start_angle, span_angle, winding_dir)
 
-        # Angle from origin to arc.start matches start_angle.
-        start_angle_observed = math.atan2(arc.start.x - origin.x, arc.start.y - origin.y)
-        start_angle_observed = start_angle_observed % (math.pi * 2)
-        end_angle_observed = math.atan2(arc.end.x - origin.x, arc.end.y - origin.y)
-        end_angle_observed = end_angle_observed % (math.pi * 2)
-
-        self.assertEqual(start_angle_observed, start_angle)
-        self.assertEqual(end_angle_observed, start_angle + span_angle)
-
+        self.verify_arc(arc)
 
     def test_create_ccw_full_circle(self):
         """ Check create_arc() method works in a sane way for CounterClockWise arcs. """
         origin = Point(10, 10)
         radius = 5
         start_angle = 0
-        span_angle = -math.pi * 1.9999999
+        span_angle = -math.pi * 2
         winding_dir = geometry.ArcDir.CCW
 
         arc = geometry.create_arc(origin, radius, start_angle, span_angle, winding_dir)
 
-        # For CCW arcs, span_angle should be negative.
-        self.assertLess(arc.span_angle, 0)
-
-        self.assertEqual(arc.start, Point(arc.path.coords[0]))
-        self.assertEqual(arc.end, Point(arc.path.coords[-1]))
-
-        # Length of path close to accurate.
-        path_len = math.pi * 2 * radius   # full circle.
-        self.assertLess(abs(path_len - arc.path.length), path_len / 1000)
-
-        # Angle from origin to arc.start matches start_angle.
-        start_angle_observed = math.atan2(arc.start.x - origin.x, arc.start.y - origin.y)
-        start_angle_observed = start_angle_observed % (math.pi * 2)
-        end_angle_observed = math.atan2(arc.end.x - origin.x, arc.end.y - origin.y)
-        end_angle_observed = end_angle_observed % (math.pi * 2)
-
-        self.assertEqual(start_angle_observed, start_angle)
-        self.assertLess(abs(end_angle_observed - (start_angle + span_angle) % (math.pi * 2)), 0.0001)
+        self.verify_arc(arc)
 
 
-class TestArc(unittest.TestCase):
+class TestArc(BaseTests):
     def test_create_arc_from_path_CW(self):
         """ Create a Clockwise arc. """
         origin = Point(10, -0.11)
@@ -142,33 +140,17 @@ class TestArc(unittest.TestCase):
 
         self.assertEqual(arc.origin, origin)
         self.assertEqual(arc.radius, radius)
-        self.assertTrue(arc.start.equals_exact(Point(arc.path.coords[0]), 1e-6))
-        self.assertTrue(arc.end.equals_exact(Point(arc.path.coords[-1]), 1e-6))
+        self.assertEqual(arc.winding_dir, winding_dir)
 
         # We start this arc at the coordinate point: (radius, 0) with the origin at (0, 0).
         # Angle rotated from full circle's start/end point:
         expected_start_angle = (1 / 8) * (2 * math.pi)
         # Add to full circle's start angle.
         expected_start_angle = (math.pi / 2) + expected_start_angle
+
         self.assertLess(abs(arc.start_angle - expected_start_angle), ACCURACY * math.pi * 2 )
 
-        # Arc rotation should be 3/4 of a full circle for this arc.
-        expected_span = (3 / 4) * (2 * math.pi)
-        self.assertLess(abs(arc.span_angle - expected_span), ACCURACY * math.pi * 2)
-
-        # Clockwise rotation should be positive.
-        self.assertGreater(arc.span_angle, 0)
-
-        # Arc length should be 3/4 of a full circle for this arc.
-        path_len = arc.path.length
-        expected_path_len = 2 * math.pi * radius * (3 / 4)
-        self.assertLess(abs(arc.path.length - expected_path_len), ACCURACY * expected_path_len)
-
-        # Radius equal to all points.
-        for point in path:
-            self.assertEqual(
-                    round(arc.origin.distance(Point(path[0])), 6),
-                    round(arc.origin.distance(Point(point)), 6))
+        self.verify_arc(arc)
 
     def test_create_arc_from_path_CCW(self):
         """ Create a Counter-Clockwise arc. """
@@ -186,8 +168,7 @@ class TestArc(unittest.TestCase):
 
         self.assertEqual(arc.origin, origin)
         self.assertEqual(arc.radius, radius)
-        self.assertTrue(arc.start.equals_exact(Point(arc.path.coords[0]), 1e-6))
-        self.assertTrue(arc.end.equals_exact(Point(arc.path.coords[-1]), 1e-6))
+        self.assertEqual(arc.winding_dir, winding_dir)
 
         # We start this arc at the coordinate point: (radius, 0) with the origin at (0, 0).
         # Angle rotated from full circle's start/end point:
@@ -196,23 +177,7 @@ class TestArc(unittest.TestCase):
         expected_start_angle = (math.pi / 2) - expected_start_angle
         self.assertLess(abs(arc.start_angle - expected_start_angle), ACCURACY * math.pi * 2 )
 
-        # Arc rotation should be 3/4 of a full circle for this arc.
-        expected_span = -(3 / 4) * (2 * math.pi)
-        self.assertLess(abs(arc.span_angle - expected_span), ACCURACY * math.pi * 2)
-
-        # Counter-clockwise rotation should be negative.
-        self.assertLess(arc.span_angle, 0)
-
-        # Arc length should be 3/4 of a full circle for this arc.
-        path_len = arc.path.length
-        expected_path_len = 2 * math.pi * radius * (3 / 4)
-        self.assertLess(abs(arc.path.length - expected_path_len), ACCURACY * expected_path_len)
-
-        # Radius equal to all points.
-        for point in path:
-            self.assertEqual(
-                    round(arc.origin.distance(Point(path[0])), 6),
-                    round(arc.origin.distance(Point(point)), 6))
+        self.verify_arc(arc)
 
 
 if __name__ == '__main__':

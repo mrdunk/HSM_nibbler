@@ -156,14 +156,28 @@ def create_arc(
     if radius == 0:
         return None
 
+    span_angle = min(span_angle, 2 * math.pi)
+    span_angle = max(span_angle, -2 * math.pi)
+
     start_angle = start_angle % (2 * math.pi)
 
-    circle_path = origin.buffer(radius).boundary
-
     line_up = LineString([origin, Point(origin.x, origin.y + radius * 2)])
+    circle_path = origin.buffer(radius).boundary
     circle_path = split(circle_path, line_up)
     points = circle_path.geoms[1].coords[:] + circle_path.geoms[0].coords[:]
     circle_path = LineString(points)
+
+    if abs(span_angle) == 2 * math.pi:
+        return ArcData(
+                origin,
+                radius,
+                Point(circle_path.coords[0]),
+                Point(circle_path.coords[0]),
+                start_angle,
+                span_angle,
+                winding_dir,
+                circle_path,
+                "")
 
     # With shapely.affinity.rotate(...) -ive angles are clockwise.
     right_border = rotate(line_up, -span_angle, origin=origin, use_radians=True)
@@ -1405,9 +1419,9 @@ class EntryCircle(BaseGeometry):
 
     def circle(self):
         if self.winding_dir == ArcDir.CCW:
-            angle = -math.pi * 1.9999
+            angle = -math.pi * 2
         else:
-            angle = math.pi * 1.9999
+            angle = math.pi * 2
 
         new_arc = create_arc(self.center, self.radius, 0, angle, self.winding_dir)
         sorted_arcs = self._split_arcs([new_arc])
