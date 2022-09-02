@@ -14,19 +14,23 @@ from shapely.affinity import rotate  # type: ignore
 from shapely.geometry import box, LinearRing, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon  # type: ignore
 from shapely.ops import linemerge, split, unary_union  # type: ignore
 
+DEBUG_DISPLAY = None
 try:
-    from debug import display
+    from debug import Display
     from voronoi_centers import (
             round_coord, start_point_perimeter, start_point_widest, VoronoiCenters)  # type: ignore
     from helpers import log  # type: ignore
+    DEBUG_DISPLAY = Display()
 except ImportError:
     try:
-        from cam.debug import display  # type: ignore
+        from cam.debug import Display  # type: ignore
+        DEBUG_DISPLAY = Display()
     except ImportError:
         pass
     from cam.voronoi_centers import (  # type: ignore
             round_coord, start_point_perimeter, start_point_widest, VoronoiCenters)
     from cam.helpers import log  # type: ignore
+
 
 # Filter arcs that are entirely within this distance of a pocket edge.
 SKIP_EDGE_ARCS = 1 / 20
@@ -383,7 +387,7 @@ class BaseGeometry:
     def _reset(self) -> None:
         self.pending_arc_queues: List[List[ArcData]] = []
         self.last_arc: Optional[ArcData] = None
-        self.dilated_polygon = self.polygon.buffer(self.step / 20)
+        self.dilated_polygon = self.polygon.buffer(self.step / 10)
 
         self.cut_area_total = self.starting_cut_area
         self.cut_area_total2 = self.starting_cut_area.buffer(self.step / 2)
@@ -547,7 +551,7 @@ class BaseGeometry:
         # TODO: Is dilating self.cut_area_total2 here needed? Can we optimize?
         inside_pocket = (
                 path.covered_by(self.dilated_polygon)
-                or path.covered_by(self.cut_area_total2.buffer(-dilation))
+                #or path.covered_by(self.cut_area_total2.buffer(-dilation))
                 )
 
         if inside_pocket:
@@ -708,7 +712,7 @@ class Pocket(BaseGeometry):
         if starting_radius and self.max_starting_radius < starting_radius:
             print(f"Warning: Starting radius of {starting_radius} overlaps boundaries "
                   f"at {voronoi.start_point}")
-            print(f" Largest possible at his location: {round(self.max_starting_radius, 3)}")
+            print(f" Largest possible at this location: {round(self.max_starting_radius, 3)}")
         if self.starting_radius is not None:
             radius = min(self.starting_radius, self.max_starting_radius)
             start_circle = voronoi.start_point.buffer(radius)
@@ -717,10 +721,6 @@ class Pocket(BaseGeometry):
         super().__init__(to_cut, step, winding_dir, already_cut=self.starting_cut_area)
 
         self._reset()
-
-        display(polygons=[self.starting_cut_area, to_cut, self.dilated_polygon],
-                voronoi=self.voronoi)
-
         self.calculate_path()
 
     def _reset(self) -> None:
@@ -795,6 +795,16 @@ class Pocket(BaseGeometry):
                 next(generator)
             except StopIteration:
                 pass
+
+    def done_generating(self):
+        if DEBUG_DISPLAY:
+            DEBUG_DISPLAY.display(
+                    polygons=[
+                        self.starting_cut_area, self.polygon, self.dilated_polygon
+                        ],
+                    voronoi=self.voronoi,
+                    path=self.path
+                    )
 
     def _choose_next_path(
             self,
@@ -1242,6 +1252,8 @@ class Pocket(BaseGeometry):
         log(f"len(path): {len(self.path)}")
         log(f"path_fail_count: {self.path_fail_count}")
 
+        self.done_generating()
+
 
     def _filter_arc(self, arc: ArcData) -> Optional[ArcData]:
         """
@@ -1419,9 +1431,9 @@ class EntryCircle(BaseGeometry):
 
     def circle(self):
         if self.winding_dir == ArcDir.CCW:
-            angle = -math.pi * 2
+            angle = -math.pi * 1.99999
         else:
-            angle = math.pi * 2
+            angle = math.pi * 1.99999
 
         new_arc = create_arc(self.center, self.radius, 0, angle, self.winding_dir)
         sorted_arcs = self._split_arcs([new_arc])

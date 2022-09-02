@@ -25,58 +25,90 @@ try:
 except ImportError:
     from cam.voronoi_centers import VoronoiCenters  # type: ignore
 
-def display(polygons: Optional[List[Union[Polygon, MultiPolygon]]] = None,
-            voronoi: Optional[VoronoiCenters] = None) -> None:
+class Display:
     """
     Use matplotlib.pyplot to display outline of polygons and voronoi diagram.
     """
-    if not os.environ.get("HSM_DEBUG"):
-        return
+    filename: str = "/tmp/hsm.png"
+    resolution: int = 1000
+    screen: bool = False
+    initialised: bool = False
+    count: int = 0
 
-    if not plt:
-        print("Error: matplotlib.pyplot not imported.")
-        return
+    def __init__(self):
+        if not os.environ.get("HSM_DEBUG"):
+            return
 
-    resolution = 1000
-    filename = "/tmp/hsm.png"
-    screen = False
+        if not plt:
+            print("Error: matplotlib.pyplot not imported.")
+            return
 
-    if os.environ.get("HSM_DEBUG_RES"):
-        resolution = int(os.environ.get("HSM_DEBUG_RES"))
+        if os.environ.get("HSM_DEBUG_RES"):
+            self.resolution = int(os.environ.get("HSM_DEBUG_RES"))
 
-    if os.environ.get("HSM_DEBUG_FILENAME"):
-        filename = os.environ.get("HSM_DEBUG_FILENAME")
+        if os.environ.get("HSM_DEBUG_FILENAME"):
+            self.filename = os.environ.get("HSM_DEBUG_FILENAME")
 
-    if os.environ.get("HSM_DEBUG_SCREEN"):
-        screen = True
+        if os.environ.get("HSM_DEBUG_SCREEN"):
+            self.screen = True
 
-    print(f"Printing debug image: {filename} at resolution: {resolution}dpi")
+        print(f"Writing debug image: {self.filename} at resolution: {self.resolution} dpi")
 
-    if polygons is None:
-        polygons = []
+        plt.gca().set_aspect('equal')
 
-    for multi in polygons:
-        if multi.type != "MultiPolygon":
-            multi = MultiPolygon([multi])
-        for polygon in multi.geoms:
-            for ring in [polygon.exterior] + list(polygon.interiors):
-                x, y = ring.xy
-                plt.plot(x, y, linewidth=0.01)
+        self.initialised = True
 
-    if voronoi:
-        for edge in voronoi.edges.values():
-            x = []
-            y = []
-            for point in edge.coords:
-                x.append(point[0])
-                y.append(point[1])
-            plt.plot(x, y, c="red", linewidth=0.1)
-            plt.plot(x[0], y[0], 'o', c='red', markersize=0.1)
-            plt.plot(x[-1], y[-1], 'o', c='red', markersize=0.1)
+    def display(self,
+            polygons: Optional[List[Union[Polygon, MultiPolygon]]] = None,
+            voronoi: Optional[VoronoiCenters] = None,
+            path: Optional[List] = None) -> None:
+        self.count += 1
+        if self.count != 2:
+            return
+        print(self.count)
 
-    plt.gca().set_aspect('equal')
-    if filename:
-        plt.savefig(filename, dpi=resolution, bbox_inches='tight')
-    if screen:
-        plt.show()
+        if not self.initialised:
+            return
 
+        if polygons is None:
+            polygons = []
+
+        for multi in polygons:
+            if multi.type != "MultiPolygon":
+                multi = MultiPolygon([multi])
+            for polygon in multi.geoms:
+                for ring in [polygon.exterior] + list(polygon.interiors):
+                    x, y = ring.xy
+                    plt.plot(x, y, linewidth=0.01)
+
+        if voronoi:
+            for edge in voronoi.edges.values():
+                x = []
+                y = []
+                for point in edge.coords:
+                    x.append(point[0])
+                    y.append(point[1])
+                plt.plot(x, y, c="red", linewidth=0.1)
+                plt.plot(x[0], y[0], 'o', c='red', markersize=0.1)
+                plt.plot(x[-1], y[-1], 'o', c='red', markersize=0.1)
+
+        if path:
+            for entity in path:
+                x = []
+                y = []
+                for point in entity.path.coords:
+                    x.append(point[0])
+                    y.append(point[1])
+                colour = "black"
+                if type(entity).__name__ is "Line":
+                    if (str(entity.move_style) == "MoveStyle.RAPID_OUTSIDE"
+                            or str(entity.move_style) == "MoveStyle.RAPID_INSIDE"):
+                        colour = "red"
+                plt.plot(x, y, c=colour, linewidth=0.01)
+
+        if self.filename:
+            plt.savefig(self.filename, dpi=self.resolution, bbox_inches='tight')
+        if self.screen:
+            plt.show()
+
+        print("Done writing debug image section.")
