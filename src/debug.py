@@ -34,6 +34,7 @@ class Display:
     screen: bool = False
     initialised: bool = False
     count: int = 0
+    colours: List[str] = ["blue", "orange", "green", "cyan", "magenta", "purple", "brown", "grey", "olive", "pink", "yellow"]
 
     def __init__(self):
         if not os.environ.get("HSM_DEBUG"):
@@ -62,24 +63,27 @@ class Display:
             polygons: Optional[List[Union[Polygon, MultiPolygon]]] = None,
             voronoi: Optional[VoronoiCenters] = None,
             path: Optional[List] = None) -> None:
-        self.count += 1
-        if self.count != 2:
-            return
-        print(self.count)
-
         if not self.initialised:
             return
+
+        self.count += 1
+        if self.count != 1:
+            return
+        print(self.count)
 
         if polygons is None:
             polygons = []
 
-        for multi in polygons:
+        for index, key in enumerate(polygons.keys()):
+            multi = polygons[key]
+            colour = self.colours[index % len(self.colours)]
+            print(f"  {key}: {colour}")
             if multi.type != "MultiPolygon":
                 multi = MultiPolygon([multi])
             for polygon in multi.geoms:
                 for ring in [polygon.exterior] + list(polygon.interiors):
                     x, y = ring.xy
-                    plt.plot(x, y, linewidth=0.01)
+                    plt.plot(x, y, c=colour, linewidth=0.01)
 
         if voronoi:
             for edge in voronoi.edges.values():
@@ -99,12 +103,15 @@ class Display:
                 for point in entity.path.coords:
                     x.append(point[0])
                     y.append(point[1])
+                style = "solid"
                 colour = "black"
-                if type(entity).__name__ is "Line":
-                    if (str(entity.move_style) == "MoveStyle.RAPID_OUTSIDE"
-                            or str(entity.move_style) == "MoveStyle.RAPID_INSIDE"):
+                if type(entity).__name__ == "Line":
+                    if str(entity.move_style) == "MoveStyle.RAPID_OUTSIDE":
+                        colour = "purple"
+                        style = "dotted"
+                    if str(entity.move_style) == "MoveStyle.RAPID_INSIDE":
                         colour = "red"
-                plt.plot(x, y, c=colour, linewidth=0.01)
+                plt.plot(x, y, c=colour, linestyle=style, linewidth=0.01)
 
         if self.filename:
             plt.savefig(self.filename, dpi=self.resolution, bbox_inches='tight')

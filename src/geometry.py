@@ -219,7 +219,16 @@ def create_arc_from_path(
     start_angle = None
     span_angle = None
 
-    return ArcData(origin, radius, start, end, start_angle, span_angle, winding_dir, path, debug)
+    return ArcData(
+            origin,
+            radius,
+            start,
+            end,
+            start_angle,
+            span_angle,
+            winding_dir,
+            path,
+            debug)
 
 def mirror_arc(
         x_line: float,
@@ -229,17 +238,26 @@ def mirror_arc(
     """
     Mirror X axis of an arc about the origin point.
     """
+
     if winding_dir is None:
+        assert (arc_data.winding_dir == ArcDir.CW and arc_data.span_angle > 0 or
+                arc_data.winding_dir == ArcDir.CCW and arc_data.span_angle < 0)
+
         if arc_data.winding_dir == ArcDir.CW:
             winding_dir = ArcDir.CCW
         else:
             winding_dir = ArcDir.CW
+    else:
+        if winding_dir == arc_data.winding_dir:
+            return arc_data
 
     arc_path = LineString(
             [((2 * x_line - point[0]), point[1]) for point in arc_data.path.coords]
             )
+    origin = Point(2 * x_line - arc_data.origin.x, arc_data.origin.y)
+    
     return ArcData(
-            arc_data.origin,
+            origin,
             arc_data.radius,
             Point(arc_path.coords[0]),
             Point(arc_path.coords[-1]),
@@ -361,36 +379,46 @@ def _colapse_dupe_points(line: LineString) -> Optional[LineString]:
 
 
 class BaseGeometry:
-    # TODO: Can we get by with only cut_area_total2?
-    # Cut area so far, calculated by appending full circles.
+    # Area we have calculated arcs for. Calculated by appending full circles.
+    calculated_area_total: Polygon
+    # Area we have stored the toolpath for. Calculated by appending full circles.
     cut_area_total: Polygon
-    # Cut area so far, calculated by appending arc segments, dilated by (step / 2).
-    cut_area_total2: Polygon
 
     starting_cut_area: Polygon
 
     def __init__(
             self,
-            to_cut: Polygon,
+            to_cut: Union[Polygon, MultiPolygon],
             step: float,
             winding_dir: ArcDir,
             already_cut: Polygon = None,
     ) -> None:
-        self.polygon: Polygon = to_cut
+        self.polygon: Union[Polygon, MultiPolygon] = to_cut
         self.step: float = step
         self.winding_dir: ArcDir = winding_dir
         if already_cut is None:
             already_cut = Polygon()
         self.starting_cut_area = already_cut
         self.path: List[Union[ArcData, LineData]] = []
-
-    def _reset(self) -> None:
         self.pending_arc_queues: List[List[ArcData]] = []
         self.last_arc: Optional[ArcData] = None
+
+        self.calculated_area_total = self.starting_cut_area
+        self.cut_area_total = Polygon(self.starting_cut_area)
+        assert self.calculated_area_total is not self.cut_area_total
+
+        self._filter_input_geometry()
         self.dilated_polygon = self.polygon.buffer(self.step / 10)
 
-        self.cut_area_total = self.starting_cut_area
-        self.cut_area_total2 = self.starting_cut_area.buffer(self.step / 2)
+    def _filter_input_geometry(self) -> None:
+        """Remove any tiny polygons from a MultiPolygon. """
+        min_area = (self.step / 20) ** 2
+
+        if self.polygon.type != "MultiPolygon":
+            self.polygon = MultiPolygon([self.polygon])
+
+        self.polygon = MultiPolygon([poly for poly in self.polygon.geoms
+                    if poly.buffer(-self.step / 20).area > min_area])
 
     def _flush_arc_queues(self) -> None:
         while self.pending_arc_queues:
@@ -531,12 +559,6 @@ class BaseGeometry:
             if self.last_arc is not None:
                 self.path += self.join_arcs(arc)
             self.path.append(arc)
-            # This union takes up ~5% of processing time of the whole algorithm.
-            # TODO: Only truncated arcs really need the whole check in 'join_arcs(...)'.
-            # We could tag arcs that need the detailed check and use shapely's
-            # unary_union(...) here for the others.
-            self.cut_area_total2 = self.cut_area_total2.union(arc.path.buffer(self.step / 2))
-
             self.last_arc = arc
 
     def join_arcs(self, next_arc: ArcData) -> List[LineData]:
@@ -548,26 +570,29 @@ class BaseGeometry:
         path = LineString([self.last_arc.end, next_arc.start])
         dilation = (self.step / 2) - (self.step / 20)
 
-        # TODO: Is dilating self.cut_area_total2 here needed? Can we optimize?
         inside_pocket = (
                 path.covered_by(self.dilated_polygon)
-                #or path.covered_by(self.cut_area_total2.buffer(-dilation))
+                or path.covered_by(self.cut_area_total)
                 )
 
         if inside_pocket:
             # Whole path is inside pocket and is already cut.
-            not_cut_path_area = (path.buffer(self.step / 2).
-                    difference(self.cut_area_total2).buffer(dilation))
-            split_path = split(path, not_cut_path_area)
+            try:
+                split_path = split(path, self.cut_area_total)
+            except ValueError:
+                split_path = MultiLineString([path])
 
             for part in split_path.geoms:
                 assert part.type == "LineString"
 
-                move_style = MoveStyle.RAPID_INSIDE
-                if part.intersects(not_cut_path_area):
-                    move_style = MoveStyle.CUT
+                mid = part.interpolate(0.5, normalized=True)
 
-                line = LineData(Point(part.coords[0]), Point(part.coords[-1]), part, move_style)
+                move_style = MoveStyle.CUT
+                if mid.covered_by(self.cut_area_total):
+                    move_style = MoveStyle.RAPID_INSIDE
+
+                line = LineData(
+                        Point(part.coords[0]), Point(part.coords[-1]), part, move_style)
                 if line.path.length > SHORTEST_RAPID:
                     lines.append(line)
             # Shapely paths are not particularly accurate.
@@ -590,6 +615,9 @@ class BaseGeometry:
             if line.path.length > SHORTEST_RAPID:
                 lines.append(line)
 
+        self.cut_area_total = self.cut_area_total.union(
+                next_arc.origin.buffer(next_arc.radius + self.step / 20))
+
         return lines
 
     def _split_arcs(self, full_arcs: List[ArcData]) -> List[ArcData]:
@@ -601,7 +629,7 @@ class BaseGeometry:
         """
         split_arcs = []
         for full_arc in full_arcs:
-            new_arcs = arcs_from_circle_diff(full_arc, self.cut_area_total)
+            new_arcs = arcs_from_circle_diff(full_arc, self.calculated_area_total)
             if not new_arcs:
                 continue
 
@@ -681,7 +709,7 @@ class Pocket(BaseGeometry):
         else:
             already_cut = already_cut
         complete_pocket = already_cut.union(to_cut)
-        to_cut = complete_pocket.difference(already_cut.buffer(step / 20))
+        to_cut = complete_pocket.difference(already_cut)
 
         clean_multipolygon(to_cut)
         clean_multipolygon(complete_pocket)
@@ -699,10 +727,10 @@ class Pocket(BaseGeometry):
                 voronoi = VoronoiCenters(complete_pocket, starting_point=starting_point)
             elif starting_point_tactic == StartPointTactic.WIDEST:
                 voronoi = start_point_widest(
-                        self.starting_radius, step, complete_pocket, self.starting_cut_area)
+                        self.starting_radius, step, complete_pocket, already_cut)
             elif starting_point_tactic == StartPointTactic.PERIMETER:
                 voronoi = start_point_perimeter(
-                        self.starting_radius or step, complete_pocket, self.starting_cut_area)
+                        self.starting_radius or step, complete_pocket, already_cut)
 
             assert voronoi is not None
         self.voronoi = voronoi
@@ -716,16 +744,15 @@ class Pocket(BaseGeometry):
         if self.starting_radius is not None:
             radius = min(self.starting_radius, self.max_starting_radius)
             start_circle = voronoi.start_point.buffer(radius)
-            self.starting_cut_area = self.starting_cut_area.union(start_circle)
+            already_cut = already_cut.union(start_circle)
 
-        super().__init__(to_cut, step, winding_dir, already_cut=self.starting_cut_area)
+        super().__init__(to_cut, step, winding_dir, already_cut=already_cut)
 
         self._reset()
         self.calculate_path()
 
     def _reset(self) -> None:
         """ Cleanup and/or initialise everything. """
-        super()._reset()
 
         self.start_point: Point = self.voronoi.start_point
         self.start_radius: float = self.voronoi.start_distance or 0
@@ -759,7 +786,7 @@ class Pocket(BaseGeometry):
                     self.start_radius,
                     self.step,
                     self.winding_dir,
-                    already_cut=self.cut_area_total,
+                    already_cut=self.calculated_area_total,
                     path=self.path)
             entry_circle.spiral()
             entry_circle.circle()
@@ -779,10 +806,8 @@ class Pocket(BaseGeometry):
         # Assume starting circle is already cut.
         self.last_circle: Optional[ArcData] = create_circle(
             self.start_point, self.start_radius)
-        self.cut_area_total = self.cut_area_total.union(
+        self.calculated_area_total = self.calculated_area_total.union(
                 Polygon(self.last_circle.path))
-        self.cut_area_total2 = self.cut_area_total2.union(
-                Polygon(self.last_circle.path).buffer(self.step))
 
     def calculate_path(self) -> None:
         """ Reset path and restart from beginning. """
@@ -799,9 +824,12 @@ class Pocket(BaseGeometry):
     def done_generating(self):
         if DEBUG_DISPLAY:
             DEBUG_DISPLAY.display(
-                    polygons=[
-                        self.starting_cut_area, self.polygon, self.dilated_polygon
-                        ],
+                    polygons={
+                        "previously_cut": self.starting_cut_area,
+                        "to_cut": self.polygon,
+                        "to_cut_dilated": self.dilated_polygon,
+                        #"cut_progress": self.calculated_area_total,
+                        },
                     voronoi=self.voronoi,
                     path=self.path
                     )
@@ -1029,8 +1057,8 @@ class Pocket(BaseGeometry):
         assert abs(edge_extended.length -
                    (voronoi_edge.length + 2 * dist_offset)) < 0.0001
 
-        assert self.cut_area_total
-        assert self.cut_area_total.is_valid
+        assert self.calculated_area_total
+        assert self.calculated_area_total.is_valid
 
         # Loop multiple times, trying to converge on a distance along the voronoi
         # edge that provides the correct step size.
@@ -1064,7 +1092,7 @@ class Pocket(BaseGeometry):
             if self.last_circle:
                 progress = self._furthest_spacing_arcs(arcs, self.last_circle)
             else:
-                progress = self._furthest_spacing_shapely(arcs, self.cut_area_total)
+                progress = self._furthest_spacing_shapely(arcs, self.calculated_area_total)
 
             desired_step = min(self.step, (voronoi_edge.length - start_distance))
             if radius < corner_zoom:
@@ -1117,7 +1145,8 @@ class Pocket(BaseGeometry):
 
         assert circle is not None
         self.last_circle = circle
-        self.cut_area_total = self.cut_area_total.union(Polygon(circle.path))
+        self.calculated_area_total = self.calculated_area_total.union(
+                Polygon(circle.path))
 
         filtered_arcs = []
         for arc in arcs:
@@ -1198,7 +1227,6 @@ class Pocket(BaseGeometry):
 
         start_vertex: Optional[Tuple[float, float]
                                ] = self.start_point.coords[0]
-
         while start_vertex is not None:
             # This outer loop iterates through the voronoi vertexes, looking for
             # a voronoi edge that has not yet had arcs calculated for it.
@@ -1253,7 +1281,6 @@ class Pocket(BaseGeometry):
         log(f"path_fail_count: {self.path_fail_count}")
 
         self.done_generating()
-
 
     def _filter_arc(self, arc: ArcData) -> Optional[ArcData]:
         """
@@ -1349,7 +1376,6 @@ class EntryCircle(BaseGeometry):
     radius: float
     start_angle: float
     path: List[Union[ArcData, LineData]]
-    cut_area_total2 = Polygon
 
     def __init__(
             self,
@@ -1370,10 +1396,6 @@ class EntryCircle(BaseGeometry):
         if path is None:
             path = []
         self.path = path
-
-        self.cut_area_total2 = self.starting_cut_area.buffer(self.step / 2)
-
-        self._reset()
 
     def spiral(self):
         loop: float = 0.25

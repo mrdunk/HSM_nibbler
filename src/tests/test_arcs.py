@@ -27,6 +27,7 @@ class BaseTests(unittest.TestCase):
         self.assertIsNotNone(arc.span_angle)
         self.assertIsNotNone(arc.winding_dir)
         self.assertIsNotNone(arc.path)
+        self.assertIsNotNone(arc.origin)
 
         self.assertEqual(arc.start, Point(arc.path.coords[0]))
         self.assertEqual(arc.end, Point(arc.path.coords[-1]))
@@ -42,7 +43,7 @@ class BaseTests(unittest.TestCase):
         end_angle_observed = math.atan2(arc.end.x - arc.origin.x, arc.end.y - arc.origin.y)
         end_angle_observed = end_angle_observed % (math.pi * 2)
 
-        self.assertEqual(start_angle_observed, arc.start_angle)
+        self.assertAlmostEqual(start_angle_observed, arc.start_angle)
         self.assertAlmostEqual(end_angle_observed, (arc.start_angle + arc.span_angle) % (2 * math.pi))
 
         if arc.winding_dir == geometry.ArcDir.CW:
@@ -179,6 +180,73 @@ class TestArc(BaseTests):
 
         self.verify_arc(arc)
 
+
+class TestMirrorArc(BaseTests):
+    def test_mirror_arc_from_path_CW(self):
+        """ Mirror a Clockwise arc. """
+        origin = Point(100, 100)
+        radius = 5
+        span_angle = geometry.math.pi / 2
+        winding_dir = geometry.ArcDir.CW
+        mirror_axis = 123
+
+        for start_angle_multiplier in range(8):
+            start_angle = start_angle_multiplier * math.pi * 2 / 8
+            arc = geometry.create_arc(origin, radius, start_angle, span_angle, winding_dir)
+            self.verify_arc(arc)
+
+            mirrored_arc = geometry.mirror_arc(mirror_axis, arc)
+            self.verify_arc(mirrored_arc)
+            self.assertEqual(mirrored_arc.winding_dir, geometry.ArcDir.CCW)
+
+    def test_mirror_arc_from_path_CCW(self):
+        """ Mirror a Counter Clockwise arc. """
+        origin = Point(100, 100)
+        radius = 5
+        span_angle = -geometry.math.pi / 2
+        winding_dir = geometry.ArcDir.CCW
+        mirror_axis = 123
+
+        for start_angle_multiplier in range(8):
+            start_angle = start_angle_multiplier * math.pi * 2 / 8
+            arc = geometry.create_arc(origin, radius, start_angle, span_angle, winding_dir)
+            self.verify_arc(arc)
+
+            mirrored_arc = geometry.mirror_arc(mirror_axis, arc)
+            self.verify_arc(mirrored_arc)
+            self.assertEqual(mirrored_arc.winding_dir, geometry.ArcDir.CW)
+
+    def test_mirror_arc_from_path_CW_force_dir_no_change(self):
+        """ Try to mirror a Clockwise arc but no change in direction specified."""
+        origin = Point(100, 100)
+        radius = 5
+        span_angle = geometry.math.pi / 2
+        winding_dir = geometry.ArcDir.CW
+        mirror_axis = 123
+        start_angle = math.pi * 2 / 8
+
+        arc = geometry.create_arc(origin, radius, start_angle, span_angle, winding_dir)
+        self.verify_arc(arc)
+
+        mirrored_arc = geometry.mirror_arc(mirror_axis, arc, geometry.ArcDir.CW)
+
+        self.assertIs(arc, mirrored_arc)
+
+    def test_mirror_arc_from_path_CW_force_dir_change(self):
+        """ Mirror a Clockwise arc. Force winding_dir to a set state."""
+        origin = Point(100, 100)
+        radius = 5
+        span_angle = geometry.math.pi / 2
+        winding_dir = geometry.ArcDir.CW
+        mirror_axis = 123
+
+        for start_angle_multiplier in range(8):
+            start_angle = start_angle_multiplier * math.pi * 2 / 8
+            arc = geometry.create_arc(origin, radius, start_angle, span_angle, winding_dir)
+            self.verify_arc(arc)
+
+            mirrored_arc = geometry.mirror_arc(mirror_axis, arc, geometry.ArcDir.CCW)
+            self.verify_arc(mirrored_arc)
 
 if __name__ == '__main__':
     unittest.main()

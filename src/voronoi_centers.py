@@ -52,7 +52,7 @@ class VoronoiCenters:
     def __init__(
             self,
             polygon: Polygon,
-            tolerence: float = 0.1,
+            tolerence: float = 0.05,
             preserve_widest: bool = False,
             preserve_edge: bool = False,
             starting_point: Point = None
