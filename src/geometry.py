@@ -1431,6 +1431,13 @@ class EntryCircle(BaseGeometry):
             if new_arc.path.intersects(mask.exterior):
                 # Spiral has crossed bounding circle.
                 masked_arc = new_arc.path.intersection(mask)
+                if masked_arc.type == "MultiLineString":
+                    longest = None
+                    for arc in list(masked_arc.geoms):
+                        if not longest or arc.length > longest.length:
+                            longest = arc
+                    masked_arc = longest
+
                 new_arc = create_arc_from_path(
                         new_arc.origin, masked_arc, new_arc.radius, ArcDir.CW)
                 new_arc = complete_arc(new_arc, new_arc.winding_dir)
