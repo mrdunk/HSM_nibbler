@@ -215,7 +215,7 @@ def create_arc_from_path(
     Save data for the arc sections of the path.
     """
     start = Point(path.coords[0])
-    end = Point(path.coords[0])
+    end = Point(path.coords[-1])
     start_angle = None
     span_angle = None
 
@@ -468,7 +468,6 @@ class BaseGeometry:
         else:
             closest_queue: Optional[List[ArcData]]
             for arc in new_arcs:
-                #arc = complete_arc(arc, self.winding_dir)
                 closest_queue = None
                 closest_queue_index = None
                 closest_dist = self.step
@@ -527,6 +526,7 @@ class BaseGeometry:
                 continue
 
             winding_dir = self.winding_dir
+            last_arc = self.last_arc
             if winding_dir == ArcDir.Closest:
                 if self.last_arc is None:
                     winding_dir = ArcDir.CW
@@ -534,19 +534,23 @@ class BaseGeometry:
                     # TODO: We could improve this: Rather that taking the opposite
                     # of the last arc, we could work out the closest end based on
                     # the last drawn arc.
-                    if self.last_arc.winding_dir == ArcDir.CCW:
+                    if last_arc.winding_dir == ArcDir.CCW:
                         winding_dir = ArcDir.CW
                     else:
                         winding_dir = ArcDir.CCW
 
-                    assert self.last_arc.start is not None
-                    assert self.last_arc.end is not None
+                    assert last_arc.start is not None
+                    assert last_arc.end is not None
 
-                    if self.last_arc.end.distance(arc.start) < self.last_arc.end.distance(arc.end):
+                    if (last_arc.end.distance(arc.start) <
+                            last_arc.end.distance(arc.end)):
                         winding_dir = ArcDir.CW
-                    if self.last_arc.start.distance(arc.end) < self.last_arc.end.distance(arc.end):
+                    if (last_arc.start.distance(arc.end) <
+                            last_arc.end.distance(arc.end)):
                         winding_dir = ArcDir.CW
 
+                # TODO: Just reversing arc.path, arc.span_angle and arc.winding_dir
+                # would be quicker than calling complete_arc(...).
                 arc_ = complete_arc(arc, winding_dir)
                 if arc_ is None:
                     continue
@@ -556,7 +560,7 @@ class BaseGeometry:
             assert len(arc.path.coords) >= 2
             assert arc.span_angle != 0
 
-            if self.last_arc is not None:
+            if last_arc is not None:
                 self.path += self.join_arcs(arc)
             self.path.append(arc)
             self.last_arc = arc
@@ -627,9 +631,10 @@ class BaseGeometry:
         It's important to keep the sequence of the order of the resulting sub arcs
         the same as the originals so the final path can pass through them in order.
         """
+        calculated_area_total = self.calculated_area_total
         split_arcs = []
         for full_arc in full_arcs:
-            new_arcs = arcs_from_circle_diff(full_arc, self.calculated_area_total)
+            new_arcs = arcs_from_circle_diff(full_arc, calculated_area_total)
             if not new_arcs:
                 continue
 
@@ -1098,7 +1103,7 @@ class Pocket(BaseGeometry):
             if radius < corner_zoom:
                 # Limit step size as the arc radius gets very small.
                 multiplier = (corner_zoom - radius) / corner_zoom
-                desired_step = self.step - self.step * CORNER_ZOOM_EFFECT * multiplier
+                desired_step = self.step * (1 - CORNER_ZOOM_EFFECT * multiplier)
 
             if abs(desired_step - progress) < abs(desired_step - best_progress):
                 # Better fit.

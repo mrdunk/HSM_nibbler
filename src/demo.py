@@ -148,11 +148,11 @@ def generate_tool_path(shape, step_size):
             shape,
             step_size,
             #geometry.ArcDir.Closest,
-            #geometry.ArcDir.CW,
-            geometry.ArcDir.CCW,
+            geometry.ArcDir.CW,
+            #geometry.ArcDir.CCW,
             generate=True,
             #starting_point=Point(-39.9, 11.8),
-            starting_radius=2.5,
+            #starting_radius=2.5,
             debug=True)
 
     timeslice = 1000  # ms

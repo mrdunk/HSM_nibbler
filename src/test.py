@@ -81,12 +81,12 @@ def test_file(filepath: str, overlap: float, winding: geometry.ArcDir) -> Result
     shape = dxf.dxf_to_polygon(modelspace)
 
     time_run = time.time()
-    toolpath = geometry.InsidePocket(shape, overlap, winding, generate=False, debug=True)
+    toolpath = geometry.Pocket(shape, overlap, winding, generate=False, debug=True)
     time_run -= time.time()
-
-    polygon_remaining = Polygon(toolpath.polygon)#.buffer(-overlap))
-    center_circle = toolpath.start_point.buffer(toolpath.start_radius)
-    polygon_remaining = polygon_remaining.difference(center_circle)
+    
+    polygon_remaining = toolpath.polygon
+    #center_circle = toolpath.start_point.buffer(toolpath.start_radius)
+    #polygon_remaining = polygon_remaining.difference(center_circle)
     for element in toolpath.path:
         if type(element).__name__ == "Arc":
             polygon_remaining = polygon_remaining.difference(

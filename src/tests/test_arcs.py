@@ -23,9 +23,6 @@ class BaseTests(unittest.TestCase):
         self.assertIsNotNone(arc.radius)
         self.assertIsNotNone(arc.start)
         self.assertIsNotNone(arc.end)
-        self.assertIsNotNone(arc.start_angle)
-        self.assertIsNotNone(arc.span_angle)
-        self.assertIsNotNone(arc.winding_dir)
         self.assertIsNotNone(arc.path)
         self.assertIsNotNone(arc.origin)
 
@@ -35,9 +32,11 @@ class BaseTests(unittest.TestCase):
         for point in arc.path.coords:
             self.assertAlmostEqual(arc.radius, arc.origin.distance(Point(point)))
 
-        self.assertAlmostEqual(arc.path.length, arc.radius * abs(arc.span_angle), places=1)
-
     def verify_arc_angles(self, arc):
+        self.assertIsNotNone(arc.start_angle)
+        self.assertIsNotNone(arc.span_angle)
+        self.assertIsNotNone(arc.winding_dir)
+
         start_angle_observed = math.atan2(arc.start.x - arc.origin.x, arc.start.y - arc.origin.y)
         start_angle_observed = start_angle_observed % (math.pi * 2)
         end_angle_observed = math.atan2(arc.end.x - arc.origin.x, arc.end.y - arc.origin.y)
@@ -45,6 +44,8 @@ class BaseTests(unittest.TestCase):
 
         self.assertAlmostEqual(start_angle_observed, arc.start_angle)
         self.assertAlmostEqual(end_angle_observed, (arc.start_angle + arc.span_angle) % (2 * math.pi))
+
+        self.assertAlmostEqual(arc.path.length, arc.radius * abs(arc.span_angle), places=1)
 
         if arc.winding_dir == geometry.ArcDir.CW:
             self.assertGreater(arc.span_angle, 0)
@@ -77,7 +78,7 @@ class TestCircle(unittest.TestCase):
 class TestCreateArc(BaseTests):
     def test_create_cw(self):
         """ Check create_arc() method works in a sane way for ClockWise arcs. """
-        origin = Point(10, 10)
+        origin = Point(100, 100)
         radius = 5
         start_angle = geometry.math.pi / 2
         span_angle = geometry.math.pi / 2
@@ -89,7 +90,7 @@ class TestCreateArc(BaseTests):
 
     def test_create_ccw(self):
         """ Check create_arc() method works in a sane way for CounterClockWise arcs. """
-        origin = Point(10, 10)
+        origin = Point(-123, -123)
         radius = 5
         start_angle = 3 * geometry.math.pi / 2
         span_angle = -geometry.math.pi / 4
@@ -101,7 +102,7 @@ class TestCreateArc(BaseTests):
 
     def test_create_cw_full_circle(self):
         """ Check create_arc() method works in a sane way for CounterClockWise arcs. """
-        origin = Point(10, 10)
+        origin = Point(123, 123)
         radius = 5
         start_angle = 0
         span_angle = math.pi * 2
@@ -113,7 +114,7 @@ class TestCreateArc(BaseTests):
 
     def test_create_ccw_full_circle(self):
         """ Check create_arc() method works in a sane way for CounterClockWise arcs. """
-        origin = Point(10, 10)
+        origin = Point(-100, -100)
         radius = 5
         start_angle = 0
         span_angle = -math.pi * 2
@@ -127,7 +128,7 @@ class TestCreateArc(BaseTests):
 class TestArc(BaseTests):
     def test_create_arc_from_path_CW(self):
         """ Create a Clockwise arc. """
-        origin = Point(10, -0.11)
+        origin = Point(123.45, 123.45)
         radius = 7
         winding_dir = geometry.ArcDir.CW
 
@@ -137,6 +138,7 @@ class TestArc(BaseTests):
         path = path[int(len(path) / 8) : int(7 * len(path) / 8)]
 
         arc = geometry.create_arc_from_path(origin, LineString(path), radius)
+        self.verify_arc_points(arc)
         arc = geometry.complete_arc(arc, winding_dir)
 
         self.assertEqual(arc.origin, origin)
@@ -155,7 +157,7 @@ class TestArc(BaseTests):
 
     def test_create_arc_from_path_CCW(self):
         """ Create a Counter-Clockwise arc. """
-        origin = Point(0, 0)
+        origin = Point(-123.45, -123.45)
         radius = 7
         winding_dir = geometry.ArcDir.CCW
 
@@ -165,6 +167,7 @@ class TestArc(BaseTests):
         path = path[int(len(path) / 8) : int(7 * len(path) / 8)]
 
         arc = geometry.create_arc_from_path(origin, LineString(path), radius)
+        self.verify_arc_points(arc)
         arc = geometry.complete_arc(arc, winding_dir)
 
         self.assertEqual(arc.origin, origin)

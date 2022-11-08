@@ -51,7 +51,7 @@ class VoronoiCenters:
     """
     def __init__(
             self,
-            polygon: Polygon,
+            polygon: Optional[Polygon] = None,
             tolerence: float = 0.05,
             preserve_widest: bool = False,
             preserve_edge: bool = False,
@@ -64,7 +64,8 @@ class VoronoiCenters:
                 be approximately the same as the maximum expected jitter in
                 geometry coordinates.
         """
-        assert polygon
+        if not polygon:
+            return
 
         self.polygon = polygon
         self._validate_poly()
@@ -170,7 +171,7 @@ class VoronoiCenters:
                             self._store_edge(line)
                         continue
 
-        preserve = []
+        preserve = set()
         if preserve_widest:
             # The widest_gap() method checks vertices for the widest point.
             # If we remove this vertex subsequent calls will not work.
@@ -178,13 +179,13 @@ class VoronoiCenters:
             # returned vertex value as an index into this class's data structures.
             self.start_point, self.start_distance = self.widest_gap()
             if self.start_point is not None:
-                preserve.append(self.start_point.coords[0])
+                preserve.add(self.start_point.coords[0])
         if preserve_edge:
             # The vertex_on_perimiter() method picks a vertex that touches the
             # perimeter. We might not want to clean that up if we want to cut in from
             # the edge.
             self.start_point = self.vertex_on_perimiter()
-            preserve.append(self.start_point.coords[0])
+            preserve.add(self.start_point.coords[0])
             self.start_distance = 0
 
         self._drop_irrelevant_edges(preserve)
@@ -192,7 +193,7 @@ class VoronoiCenters:
         if starting_point is not None:
             # Set the starting point.
             self.set_starting_point(starting_point)
-            preserve.append(self.start_point.coords[0])
+            preserve.add(self.start_point.coords[0])
 
         self._split_on_pocket_edge()
         self._combine_edges(preserve)
@@ -263,7 +264,7 @@ class VoronoiCenters:
         Store a vorinoi edge and associated vertices in out internal data structures.
         """
         if edge.length == 0:
-            return 
+            return
 
         edge_index = replace_index
         if edge_index is None:
@@ -313,7 +314,7 @@ class VoronoiCenters:
             distance = min(distance, ring.distance(point))
         return distance
 
-    def _combine_edges(self, dont_merge: List[Tuple[float, float]]) -> None:
+    def _combine_edges(self, dont_merge: Set[Tuple[float, float]]) -> None:
         """
         For any voronoi vertex with only 2 edges meeting there, combine the
         voronoi edges, removing the vertex.
@@ -390,70 +391,99 @@ class VoronoiCenters:
             self._store_edge(LineString([edge_0.coords[0], vertex_updated_0]), edge_i_0)
             self._store_edge(LineString([edge_1.coords[0], vertex_updated_1]), edge_i_1)
 
-    def _follow_cleanup_candidates(self, vertex: Vertex) -> Set[int]:
-        """
-        Voronoi edges that touch self.polygon are sometimes not needed and are
-        candidates for pruning.
-        eg: When the outer geometry contains an arc section, the arc will have been
-        split into straight line facets. A voronoi edge will touch the point where
-        these facets join. We do not need these voronoi edges so they should be pruned.
+    def _vertexes_to_edge(self, vert_a: Vertex, vert_b: Vertex) -> Optional[int]:
+        edge = set(self.vertex_to_edges[vert_a]).intersection(set(self.vertex_to_edges[vert_b]))
+        if edge:
+            return edge.pop()
+        return None
 
-        Arguments:
-            vertex: The starting point of an edge that may need pruned.
-        Returns:
-            A set of indexes into self.edges that need pruned.
-        """
-        vertex_start: Vertex = vertex
-        last_edge_angle: Optional[float] = None
-        visited_edges: Set[int] = set()
-        to_return: Set[int] = set()
-        working = True
-        while working:
-            working = False
-            edges_i = self.vertex_to_edges[vertex_start]
-            if last_edge_angle is None and len(edges_i) != 1:
-                # Only interested in starting at the end of an edge.
-                return set()
+    def _follow_cleanup_candidates(self, edge_i: int, preserve: Set[Tuple[float, float]]) -> Set[int]:
+        vertices_to_cleanup = []
+        vertex_origin = None
+        visited_edges = set()
+        last_edge_angle = None
+        next_edges = set([edge_i])
+        previous_vertex_end = None
 
-            for edge_i in edges_i:
-                if edge_i in visited_edges:
-                    continue
-                visited_edges.add(edge_i)
+        while True:
+            best_fit_edge_i = None
+            best_fit_edge_angle = None
+            best_fit_angle_diff = 0.3
 
-                vertices = self.edge_to_vertex[edge_i]
-                vertex_end = vertices[0] if vertex_start != vertices[0] else vertices[1]
+            for candidate_edge_i in next_edges:
+                candidate_vertex_start, candidate_vertex_end = self.edge_to_vertex[candidate_edge_i]
 
-                edge_angle = math.atan2(
-                    (vertex_start[0] - vertex_end[0]), (vertex_start[1] - vertex_end[1]))
+                if last_edge_angle is None:
+                    # First time around the loop.
+                    if len(self.vertex_to_edges[candidate_vertex_start]) > 1:
+                        # Try to start at the end of the edge with no junctions.
+                        candidate_vertex_start, candidate_vertex_end = (
+                                candidate_vertex_end, candidate_vertex_start)
+                    if len(self.vertex_to_edges[candidate_vertex_start]) > 1:
+                        # Trying to start from an edge with junctions at both ends.
+                        return set()
 
-                if abs(LineString([vertex, vertex_end]).length -
-                       self.distance_from_geom(Point(vertex_end))) >= self.tolerence:
-                    # The closest point on the outer geometry is closer that the end of the
-                    # end of the edges we are tracking.
-                    # This implies vertex_end is the far side of the arc center from the
-                    # first section.
-                    # Not a candidate for cleanup.
-                    # TODO: We could also compare how parallel the line between vertex
-                    # and nearest pint is to the edges we are examining. If they are
-                    # roughly parallel we should still consider this edge for cleanup.
+                    vertex_origin = candidate_vertex_start
+                    previous_vertex_end = candidate_vertex_start
+                    vertices_to_cleanup.append(candidate_vertex_start)
+                else:
+                    if candidate_vertex_end == previous_vertex_end:
+                        candidate_vertex_start, candidate_vertex_end = candidate_vertex_end, candidate_vertex_start
+                assert candidate_vertex_start == previous_vertex_end
+                assert vertices_to_cleanup[-1] == candidate_vertex_start
+
+                if candidate_vertex_start in preserve or candidate_vertex_end in preserve:
                     continue
 
-                if (last_edge_angle is None or
-                        abs(edge_angle - last_edge_angle) < 0.3 or
-                        (len(edges_i) == 2 and len(self.vertex_to_edges[vertex_end]) == 2)):
-                    # This voronoi edge section is one of the following:
-                    # 1. The first to be considered.
-                    # 2. Roughly co-linear with the previous section.
-                    # 3. Joins exactly one other edge at either end.
-                    to_return.add(edge_i)
-                    vertex_start = vertex_end
-                    working = True
-                    last_edge_angle = edge_angle
-                    break
+                if (
+                        #True or
+                        abs(LineString([vertex_origin, candidate_vertex_end]).length) >=
+                        abs(self.distance_from_geom(Point(candidate_vertex_end))  * 1.01)
+                        #and
+                        #self.distance_from_geom(Point(candidate_vertex_end)) * 1.01 >=
+                        #self.distance_from_geom(Point(previous_vertex_end))
+                        ):
+                    continue
 
-        return to_return
+                candidate_edge_angle = math.atan2(
+                    (candidate_vertex_start[0] - candidate_vertex_end[0]),
+                    (candidate_vertex_start[1] - candidate_vertex_end[1]))
 
-    def _drop_irrelevant_edges(self, preserve: List[Tuple[float, float]]) -> None:
+                if last_edge_angle is None:
+                    best_fit_edge_angle = candidate_edge_angle
+                    best_fit_vertex_end = candidate_vertex_end
+                    best_fit_edge_i = candidate_edge_i
+                    continue
+
+                angle_diff = abs((candidate_edge_angle - last_edge_angle))
+                if angle_diff < best_fit_angle_diff:
+                    best_fit_angle_diff = angle_diff
+                    best_fit_vertex_end = candidate_vertex_end
+                    best_fit_edge_i = candidate_edge_i
+                    best_fit_edge_angle = candidate_edge_angle
+
+            if best_fit_edge_i is None:
+                break
+
+            last_edge_angle = best_fit_edge_angle
+            previous_vertex_end = best_fit_vertex_end
+            vertices_to_cleanup.append(previous_vertex_end)
+            visited_edges.add(best_fit_edge_i)
+
+            next_edges = set(self.vertex_to_edges[previous_vertex_end]).difference(visited_edges)
+
+
+        last_vertex = None
+        to_cleanup = set()
+        for vertex in vertices_to_cleanup:
+            if last_vertex:
+                assert self._vertexes_to_edge(last_vertex, vertex) is not None
+                to_cleanup.add(self._vertexes_to_edge(last_vertex, vertex))
+            last_vertex = vertex
+
+        return to_cleanup
+
+    def _drop_irrelevant_edges(self, preserve: Set[Tuple[float, float]]) -> None:
         """
         If any geometry resulting from a voronoi edge will be covered by the
         geometry of some other voronoi edge it is deemed irrelevant and pruned
@@ -461,10 +491,7 @@ class VoronoiCenters:
         """
         to_prune: Set[int] = set()
         for edge_i in self.edges:
-            vert_a, vert_b = self.edge_to_vertex[edge_i]
-            if vert_a not in preserve and vert_b not in preserve:
-                to_prune |= self._follow_cleanup_candidates(vert_a)
-                to_prune |= self._follow_cleanup_candidates(vert_b)
+            to_prune |= self._follow_cleanup_candidates(edge_i, preserve)
 
         for edge_i in to_prune:
             self._remove_edge(edge_i)
@@ -477,8 +504,8 @@ class VoronoiCenters:
             (Point, float): Point at center of widest point.
                             Radius of circle that fits in widest point.
         """
-        max_dist = max((self.polygon.bounds[2] - self.polygon.bounds[0]),
-                       (self.polygon.bounds[3] - self.polygon.bounds[1])) + 1
+        max_dist = max(abs(self.polygon.bounds[2] - self.polygon.bounds[0]),
+                       abs(self.polygon.bounds[3] - self.polygon.bounds[1])) + 1
 
         widest_dist = 0
         widest_point = None
