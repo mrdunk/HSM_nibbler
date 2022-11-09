@@ -15,6 +15,9 @@ from shapely.geometry import Point, LineString  # type: ignore
 import dxf
 import geometry
 
+#import warnings
+#from shapely.errors import ShapelyDeprecationWarning
+#warnings.filterwarnings("error", category=ShapelyDeprecationWarning) 
 
 def print_entity(entity: ezdxf.entities.DXFGraphic, indent: int = 0):
     """ Display some debug information about a DXF file. """

@@ -38,6 +38,13 @@ Result = NamedTuple("Result", [
     ("dangerous_crash_count", int),
 ])
 
+Error = NamedTuple("Error", [
+    ("filename", str),
+    ("overlap", float),
+    ("winding", geometry.ArcDir),
+    ("message", str),
+])
+
 
 def signal_handler(_, __):
     """
@@ -176,7 +183,9 @@ def test_file(
 
     dxf_data = ezdxf.readfile(filepath)
     modelspace = dxf_data.modelspace()
+
     shape = dxf.dxf_to_polygon(modelspace).geoms[-1]
+    shape = shape.buffer(0)
 
     time_run = time.time()
     toolpath = geometry.Pocket(shape, overlap, winding, generate=False)
@@ -251,6 +260,7 @@ def main():
     Run with --help parameter for usage info.
     """
     global results
+    errors = []
 
     signal.signal(signal.SIGINT, signal_handler)
 
@@ -284,6 +294,7 @@ def main():
                 except Exception as error:
                     print(error)
                     print(f"during: {filepath}\t{overlap}\t{winding}")
+                    errors.append(Error(filepath, overlap, winding, error))
                     #raise error
 
                 if break_count:
@@ -294,6 +305,7 @@ def main():
             break
 
     print(tabulate(results, headers="keys"))
+    print(tabulate(errors, headers="keys"))
     return 0
 
 
