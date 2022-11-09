@@ -19,7 +19,7 @@ import numpy as np  # type: ignore
 import matplotlib.pyplot as plt  # type: ignore
 import matplotlib.patches as patches  # type: ignore
 from shapely.geometry import LineString, MultiLineString, MultiPolygon, Polygon  # type: ignore
-from shapely.ops import linemerge  # type: ignore
+from shapely.ops import linemerge, unary_union  # type: ignore
 from tabulate import tabulate
 
 import dxf
@@ -36,6 +36,13 @@ Result = NamedTuple("Result", [
     ("cut_ratio", float),
     ("crash_ratio", float),
     ("dangerous_crash_count", int),
+])
+
+Error = NamedTuple("Error", [
+    ("filename", str),
+    ("overlap", float),
+    ("winding", geometry.ArcDir),
+    ("message", str),
 ])
 
 
@@ -101,7 +108,7 @@ def draw(
     """Display cut path."""
     fig, ax = plt.subplots(1, 1, dpi=1600)
 
-    def polygon(poly: Polygon, colour: str, fill: bool = True) -> None:
+    def polygon(poly: Polygon, colour: str, fill: bool = True, linewidth=1) -> None:
         """Draw a Shaplely Polygon on matplotlib.pyplot. """
         if poly.type != "MultiPolygon":
             if poly.type != "Polygon":
@@ -119,7 +126,7 @@ def draw(
                         np.array(geom.exterior.xy).T, fc=colour)
                     ax.add_patch(patch)
                 else:
-                    ax.plot(*geom.exterior.xy, c=colour)
+                    ax.plot(*geom.exterior.xy, c=colour, linewidth=linewidth)
                 for interior in geom.interiors:
                     if len(interior.coords) >= 3:
                         if fill:
@@ -127,10 +134,10 @@ def draw(
                                 np.array(interior.xy).T, fc="white")
                             ax.add_patch(patch)
                         else:
-                            ax.plot(*interior.xy, c=colour)
+                            ax.plot(*interior.xy, c=colour, linewidth=linewidth)
 
     polygon(cut_area, "green")
-    polygon(pocket, "blue", fill=False)
+    polygon(pocket, "blue", fill=False, linewidth=0.1)
     polygon(crash_area, "red")
 
     for path in combined_path:
@@ -176,44 +183,43 @@ def test_file(
 
     dxf_data = ezdxf.readfile(filepath)
     modelspace = dxf_data.modelspace()
-    shape = dxf.dxf_to_polygon(modelspace)[-1]
+
+    shape = dxf.dxf_to_polygon(modelspace).geoms[-1]
+    shape = shape.buffer(0)
 
     time_run = time.time()
-    toolpath = geometry.InsidePocket(shape, overlap, winding, generate=False)
+    toolpath = geometry.Pocket(shape, overlap, winding, generate=False)
     time_run -= time.time()
 
-    cut_area = toolpath.start_point.buffer(toolpath.start_radius + overlap / 2)
+    cut_area = Polygon()
     crash_area = Polygon()
 
     combined_path = []
     combined_rapids = []
 
-    last_element = None
+    cut_area_parts = []
+    crash_area_parts = []
     for element in toolpath.path:
-        if last_element is not None:
-            assert last_element.end == element.start
-        last_element = element
-
         if type(element).__name__ == "Arc":
-            bounds = element.path.bounds
-            size = max(abs(bounds[0] - bounds[2]),
-                    abs(bounds[1] - bounds[3]))
-
             new_cut = element.path.buffer(overlap / 2)
-            if size < overlap:
-                new_cut = Polygon(new_cut.exterior)
             cut_area = cut_area.union(new_cut)
+            #cut_area_parts.append(new_cut)
 
             if show_arcs:
                 combined_path.append(element.path)
-        elif type(element).__name__ == "Line":
+    #cut_area = unary_union(cut_area_parts)
+
+    #for element in toolpath.path:
+        if type(element).__name__ == "Line":
             if element.move_style == geometry.MoveStyle.RAPID_INSIDE:
                 crash = element.path.buffer(overlap / 2).difference(cut_area)
-                crash_area = crash_area.union(crash)
+                #crash_area = crash_area.union(crash)
+                crash_area_parts.append(crash)
                 if show_arcs:
                     combined_path.append(element.path)
             elif show_arcs:
                 combined_rapids.append(element.path)
+    crash_area = unary_union(crash_area_parts)
 
     uncut_area = toolpath.polygon.difference(cut_area)
 
@@ -254,6 +260,7 @@ def main():
     Run with --help parameter for usage info.
     """
     global results
+    errors = []
 
     signal.signal(signal.SIGINT, signal_handler)
 
@@ -287,6 +294,7 @@ def main():
                 except Exception as error:
                     print(error)
                     print(f"during: {filepath}\t{overlap}\t{winding}")
+                    errors.append(Error(filepath, overlap, winding, error))
                     #raise error
 
                 if break_count:
@@ -297,6 +305,7 @@ def main():
             break
 
     print(tabulate(results, headers="keys"))
+    print(tabulate(errors, headers="keys"))
     return 0
 
 

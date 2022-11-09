@@ -14,10 +14,8 @@ from shapely.affinity import rotate  # type: ignore
 from shapely.geometry import Point, LineString  # type: ignore
 import dxf
 import geometry
+from voronoi_centers import start_point_widest
 
-#import warnings
-#from shapely.errors import ShapelyDeprecationWarning
-#warnings.filterwarnings("error", category=ShapelyDeprecationWarning) 
 
 def print_entity(entity: ezdxf.entities.DXFGraphic, indent: int = 0):
     """ Display some debug information about a DXF file. """
@@ -53,9 +51,9 @@ def display_outline(shape, colour="blue"):
         x, y = interior.xy
         plt.plot(x, y, c=colour, linewidth=2)
 
-def display_voronoi(toolpath, colour="red"):
+def display_voronoi(voronoi, colour="red"):
     """ Display the voronoi edges. These are equidistant from the shape's edges. """
-    for edge in toolpath.voronoi.edges.values():
+    for edge in voronoi.edges.values():
         x = []
         y = []
         for point in edge.coords:
@@ -144,18 +142,19 @@ def display_toolpath(toolpath, cut_colour="green", rapid_inside_colour="blue", r
                 assert element.move_style == geometry.MoveStyle.CUT
                 plt.plot(x, y, linestyle='--', c=cut_colour, linewidth=1)
 
+def generate_voronoi(shape, starting_radius, step_size):
+    voronoi = start_point_widest(2.5, step_size, shape)
+    return voronoi
 
-def generate_tool_path(shape, step_size):
+def generate_tool_path(shape, starting_radius, step_size, voronoi):
     """ Calculate the toolpath. """
     toolpath = geometry.Pocket(
             shape,
             step_size,
-            #geometry.ArcDir.Closest,
-            geometry.ArcDir.CW,
-            #geometry.ArcDir.CCW,
+            geometry.ArcDir.Closest,
             generate=True,
-            #starting_point=Point(-39.9, 11.8),
-            #starting_radius=2.5,
+            voronoi=voronoi,
+            starting_radius=starting_radius,
             debug=True)
 
     timeslice = 1000  # ms
@@ -194,14 +193,19 @@ def main(argv):
     shape = dxf.dxf_to_polygon(modelspace).geoms[-1]
     #shape = dxf.dxf_to_polygon(modelspace).geoms[0]
 
-    toolpath = generate_tool_path(shape, step_size)
+    starting_radius = 2.5
+    voronoi = generate_voronoi(shape, starting_radius, step_size)
+    print(f"Starting point at: {voronoi.start_point}")
+    print(f"Starting point maximum radius: {voronoi.max_starting_radius}  "
+          f"requested radius: {starting_radius}.\n")
+    toolpath = generate_tool_path(shape, starting_radius, step_size, voronoi)
     # Call toolpath.calculate_path() to scrap the existing and regenerate toolpath.
 
     display_outline(shape)
     display_entry_point(toolpath)
     #display_starting_circle(toolpath)
     display_toolpath(toolpath)
-    display_voronoi(toolpath)
+    display_voronoi(voronoi)
     # display_visited_voronoi_edges(toolpath)
 
     plt.gca().set_aspect('equal')
