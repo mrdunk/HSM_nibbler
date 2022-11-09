@@ -585,6 +585,8 @@ class BaseGeometry:
                 split_path = split(path, self.cut_area_total)
             except ValueError:
                 split_path = MultiLineString([path])
+            except TypeError:
+                split_path = MultiLineString([path])
 
             for part in split_path.geoms:
                 assert part.type == "LineString"
