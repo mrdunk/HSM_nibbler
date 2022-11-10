@@ -10,7 +10,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import voronoi_centers
 
-class TestJoinEdges(unittest.TestCase):
+class TestBoilerplate(unittest.TestCase):
     def setUp(self):
         self.vc = voronoi_centers.VoronoiCenters()
         self.vc.vertex_to_edges = {
@@ -40,7 +40,7 @@ class TestJoinEdges(unittest.TestCase):
         self.vc._check_data()
 
     def test_one(self):
-        print(self.vc._join_edges(3))
+        pass
 
 
 if __name__ == '__main__':

@@ -392,7 +392,7 @@ class VoronoiCenters:
 
         # Some edges are duplicates of each other, joined at both ends.
         # Like tiny loops.
-        stack = {}
+        still_to_remove: Dict[Tuple[Vertex, Vertex], Set[int]] = {}
         for edge_i in further_consideration:
             vert_a, vert_b = self.edge_to_vertex[edge_i]
 
@@ -401,15 +401,15 @@ class VoronoiCenters:
             if vert_a < vert_b:
                 key = (vert_b, vert_a)
 
-            stack.setdefault(key, set()).add(edge_i)
-        for edges_i in stack.values():
+            still_to_remove.setdefault(key, set()).add(edge_i)
+        for edges_i in still_to_remove.values():
             while len(edges_i) > 1 and len(self.edges) > 1:
                 edge_i = edges_i.pop()
                 self._remove_edge(edge_i)
 
         # Duplicates are now gone.
-        # Clean up simple lines.
-        for edges_i in stack.values():
+        # Clean up simple lines where appropriate.
+        for edges_i in still_to_remove.values():
             edge_i = edges_i.pop()
             vert_a, vert_b = self.edge_to_vertex[edge_i]
             if len(self.vertex_to_edges[vert_a]) == 1 and vert_a not in preserve:
@@ -557,7 +557,7 @@ class VoronoiCenters:
 
         # Convert vertexes to edges.
         last_vertex = None
-        to_cleanup = set()
+        to_cleanup: Set[int] = set()
         for vertex in vertices_to_cleanup:
             if last_vertex:
                 assert self._vertexes_to_edge(last_vertex, vertex) is not None

@@ -89,7 +89,6 @@ class MoveStyle(Enum):
 
 class StartPointTactic(Enum):
     PERIMETER = 0  # Starting point hint for outer peel. On the outer perimeter.
-    PERIMITER = 0  # Typo. TODO: remove.
     WIDEST = 1     # Starting point hint for inner pockets.
 
 
@@ -257,8 +256,12 @@ def mirror_arc(
     """
 
     if winding_dir is None:
-        assert (arc_data.winding_dir == ArcDir.CW and arc_data.span_angle > 0 or
-                arc_data.winding_dir == ArcDir.CCW and arc_data.span_angle < 0)
+        assert (arc_data.winding_dir == ArcDir.CW and
+                arc_data.span_angle is not None and 
+                arc_data.span_angle > 0 or
+                arc_data.winding_dir == ArcDir.CCW and
+                arc_data.span_angle is not None and 
+                arc_data.span_angle < 0)
 
         if arc_data.winding_dir == ArcDir.CW:
             winding_dir = ArcDir.CCW
@@ -278,8 +281,8 @@ def mirror_arc(
             arc_data.radius,
             Point(arc_path.coords[0]),
             Point(arc_path.coords[-1]),
-            -arc_data.start_angle % (math.pi * 2),
-            -arc_data.span_angle,
+            -arc_data.start_angle % (math.pi * 2) if arc_data.start_angle is not None else None,
+            -arc_data.span_angle if arc_data.span_angle is not None else None,
             winding_dir,
             arc_path,
             arc_data.debug)
@@ -538,14 +541,13 @@ class BaseGeometry:
         """
         while arcs:
             arc = arcs.pop(0)
-
             if arc is None:
                 continue
 
             winding_dir = self.winding_dir
             last_arc = self.last_arc
             if winding_dir == ArcDir.Closest:
-                if self.last_arc is None:
+                if last_arc is None:
                     winding_dir = ArcDir.CW
                 else:
                     # TODO: We could improve this: Rather that taking the opposite
@@ -638,8 +640,9 @@ class BaseGeometry:
             if line.path.length > SHORTEST_RAPID:
                 lines.append(line)
 
+        nar = next_arc.radius if next_arc.radius is not None else 0
         self.cut_area_total = self.cut_area_total.union(
-                next_arc.origin.buffer(next_arc.radius + self.step / 20))
+                next_arc.origin.buffer(nar + self.step / 20))
 
         return lines
 
@@ -695,7 +698,6 @@ class Pocket(BaseGeometry):
             starting_point_tactic: StartPointTactic = StartPointTactic.WIDEST,
             starting_point: Point = None,
             starting_radius: float = None,
-            do_starting_circle: bool = True,  # TODO: Remove
             debug: bool = False,
     ) -> None:
         """
@@ -742,7 +744,6 @@ class Pocket(BaseGeometry):
         self.starting_cut_area = already_cut
         self.starting_radius = starting_radius
         self.generate = generate
-        self.do_starting_circle = do_starting_circle
         self.debug = debug
 
         # Calculate voronoi diagram for finding points equidistant between part edges.
@@ -803,31 +804,30 @@ class Pocket(BaseGeometry):
                 self.dilated_polygon_boundaries.append(
                         ring.buffer(self.step * SKIP_EDGE_ARCS))
 
-        if self.do_starting_circle:
-            entry_circle = EntryCircle(
-                    self.polygon,
-                    self.start_point,
-                    self.start_radius,
-                    self.step,
-                    self.winding_dir,
-                    already_cut=self.calculated_area_total,
-                    path=self.path)
-            entry_circle.spiral()
-            entry_circle.circle()
+        # Generate first circle from which other arcs expand.
+        entry_circle = EntryCircle(
+                self.polygon,
+                self.start_point,
+                self.start_radius,
+                self.step,
+                self.winding_dir,
+                already_cut=self.calculated_area_total,
+                path=self.path)
+        entry_circle.spiral()
+        entry_circle.circle()
 
-            if self.starting_radius is not None:
-                radius = min(self.starting_radius, self.max_starting_radius)
-                if (self.path and
-                        self.start_point.buffer(radius).distance(
-                            self.path[0].start) < self.step / 20):
-                    assert self.path[0].start
-                    dx = self.path[0].start.x - self.start_point.x
-                    dy = self.path[0].start.y - self.start_point.y
-                    self.starting_angle = math.atan2(dx, dy)
+        if self.starting_radius is not None:
+            radius = min(self.starting_radius, self.max_starting_radius)
+            if (self.path and
+                    self.start_point.buffer(radius).distance(
+                        self.path[0].start) < self.step / 20):
+                assert self.path[0].start
+                dx = self.path[0].start.x - self.start_point.x
+                dy = self.path[0].start.y - self.start_point.y
+                self.starting_angle = math.atan2(dx, dy)
 
-            self.last_arc = entry_circle.last_arc
+        self.last_arc = entry_circle.last_arc
 
-        # Assume starting circle is already cut.
         self.last_circle: Optional[ArcData] = create_circle(
             self.start_point, self.start_radius)
         self.calculated_area_total = self.calculated_area_total.union(
@@ -1231,10 +1231,6 @@ class Pocket(BaseGeometry):
 
         return _colapse_dupe_points(line)
 
-    def _get_arcs(self, timeslice: int = 0):
-        # TODO: Deprecated. Remove.
-        return self.get_arcs(timeslice)
-
     def get_arcs(self, timeslice: int = 0):
         """
         A generator method to create the path.
@@ -1353,46 +1349,6 @@ class Pocket(BaseGeometry):
             del cut_voronoi
 
         return voronoi
-
-
-class OutsidePocketSimple(Pocket):
-    """
-    For old branch of DerpCAM compatibility.
-    TODO: Remove this class.
-    """
-    def __init__(
-            self,
-            polygon: Polygon,
-            step: float,
-            winding_dir: ArcDir,
-            generate: bool = False,
-    ) -> None:
-        outer_bound = []
-        for index, (p, m) in enumerate(zip(polygon.bounds, polygon.exterior.bounds)):
-            padding = m - p
-            if index < 2:
-                padding = min(-4 * step, padding)
-            else:
-                padding = max(4 * step, padding)
-            outer_bound.append(m + padding)
-        outer_box = box(*outer_bound)
-
-        to_cut = Polygon(outer_box)
-        for interior in polygon.interiors:
-            to_cut = to_cut.difference(Polygon(interior))
-
-        already_cut = Polygon(outer_box)
-        already_cut = already_cut.difference(Polygon(polygon.exterior))
-
-        super().__init__(
-                to_cut,
-                step,
-                winding_dir,
-                already_cut=already_cut,
-                generate=True,
-                starting_point_tactic=StartPointTactic.PERIMETER,
-                do_starting_circle=False,
-                debug=True)
 
 
 class EntryCircle(BaseGeometry):
