@@ -16,7 +16,10 @@ import matplotlib.pyplot as plt    # type: ignore
 from shapely.affinity import rotate  # type: ignore
 from shapely.geometry import Point, LineString  # type: ignore
 
+# This line is required if you want to use the local version of the code.
+# If you have installed HSM_nibble via PIP it is not required.
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from hsm_nibble import dxf
 from hsm_nibble import geometry
 
