@@ -2,56 +2,40 @@
 """
 Experimenting with CNC machining toolpaths.
 This program is a demo which uses the main library file on test .dxf CAD files.
+
+The demo shows how to calculate a HSM path on the outside of the shape to be cut.
+"geometry.Pocket(...)" takes an "already_cut" parameter which represents the outer boundary of the
+area to be cut. eg: The edge of the stock size.
 """
 
 from typing import List, Tuple
 
+import os
 import sys
 import math
 import ezdxf
 import matplotlib.pyplot as plt    # type: ignore
 from shapely.affinity import rotate  # type: ignore
-from shapely.geometry import Point, LineString  # type: ignore
-import dxf
-import geometry
+from shapely.geometry import MultiPolygon, Point, Polygon, LineString  # type: ignore
 
-#import warnings
-#from shapely.errors import ShapelyDeprecationWarning
-#warnings.filterwarnings("error", category=ShapelyDeprecationWarning) 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from hsm_nibble import dxf
+from hsm_nibble import geometry
 
-def print_entity(entity: ezdxf.entities.DXFGraphic, indent: int = 0):
-    """ Display some debug information about a DXF file. """
-    dxf_attributes = ["start", "end", "center", "radius", "count"]
-    collection_attributes = ["points"]
-    other_attributes = ["virtual_entities"]
+def display_start_point(toolpath, colour="purple"):
+    plt.plot(toolpath.start_point.x, toolpath.start_point.y, marker='o', c=colour, markersize=10)
 
-    padding = " " * indent
-    print(f"{padding}{entity}")
-    print(f"{padding}  type: {entity.dxftype()}")
-
-    for attribute in dxf_attributes:
-        if hasattr(entity.dxf, attribute):
-            print(f"{padding}  {attribute}: {getattr(entity.dxf, attribute)}")
-
-    for attribute in collection_attributes:
-        if hasattr(entity, attribute):
-            generator = getattr(entity, attribute)
-            with generator() as collection:
-                print(f"{padding}  {attribute}: {collection}")
-
-    for attribute in other_attributes:
-        if hasattr(entity, attribute):
-            got = getattr(entity, attribute)
-            print(f"{padding}  {attribute}: {list(got())}")
-
-def display_outline(shape, colour="blue"):
+def display_outline(shapes, colour="blue"):
     """ Display the outline of the shape to be cut. """
-    x, y = shape.exterior.xy
-    plt.plot(x, y, c=colour, linewidth=2)
-
-    for interior in shape.interiors:
-        x, y = interior.xy
+    if shapes.type != "MultiPolygon":
+        shapes = MultiPolygon([shapes])
+    for shape in shapes.geoms:
+        x, y = shape.exterior.xy
         plt.plot(x, y, c=colour, linewidth=2)
+
+        for interior in shape.interiors:
+            x, y = interior.xy
+            plt.plot(x, y, c=colour, linewidth=2)
 
 def display_voronoi(toolpath, colour="red"):
     """ Display the voronoi edges. These are equidistant from the shape's edges. """
@@ -80,6 +64,27 @@ def display_visited_voronoi_edges(toolpath, colour="black"):
         plt.plot(x, y, c=colour, linewidth=1)
         plt.plot(x[0], y[0], 'x', c=colour)
         plt.plot(x[-1], y[-1], 'x', c=colour)
+
+def display_toolpath(
+        toolpath, cut_colour="green", rapid_inside_colour="blue", rapid_outside_colour="orange"):
+    # Display path.
+    for element in toolpath.path:
+        if type(element).__name__ == "Arc":
+            x, y = element.path.xy
+            if element.debug:
+                plt.plot(x, y, c=element.debug, linewidth=3)
+            else:
+                plt.plot(x, y, c=cut_colour, linewidth=1)
+
+        elif type(element).__name__ == "Line":
+            x, y = element.path.xy
+            if element.move_style == geometry.MoveStyle.RAPID_INSIDE:
+                plt.plot(x, y, linestyle='--', c=rapid_inside_colour, linewidth=1)
+            elif element.move_style == geometry.MoveStyle.RAPID_OUTSIDE:
+                plt.plot(x, y, c=rapid_outside_colour, linewidth=1)
+            else:
+                assert element.move_style == geometry.MoveStyle.CUT
+                plt.plot(x, y, linestyle='--', c=cut_colour, linewidth=1)
 
 def display_entry_point(toolpath):
     if toolpath.starting_radius is None:
@@ -118,45 +123,45 @@ def display_entry_point(toolpath):
         x, y = line.xy
         plt.plot(x, y, linestyle='--', c="green", linewidth=2)
 
-def display_starting_circle(toolpath, colour="orange"):
-    starting_circle = geometry.create_circle(
-            toolpath.start_point, toolpath.start_radius).path
-    x, y = starting_circle.xy
-    plt.plot(x, y, c=colour, linewidth=4)
-
-def display_toolpath(toolpath, cut_colour="green", rapid_inside_colour="blue", rapid_outside_colour="orange"):
-    # Display path.
-    for element in toolpath.path:
-        if type(element).__name__ == "Arc":
-            x, y = element.path.xy
-            if element.debug:
-                plt.plot(x, y, c=element.debug, linewidth=3)
-            else:
-                plt.plot(x, y, c=cut_colour, linewidth=1)
-
-        elif type(element).__name__ == "Line":
-            x, y = element.path.xy
-            if element.move_style == geometry.MoveStyle.RAPID_INSIDE:
-                plt.plot(x, y, linestyle='--', c=rapid_inside_colour, linewidth=1)
-            elif element.move_style == geometry.MoveStyle.RAPID_OUTSIDE:
-                plt.plot(x, y, c=rapid_outside_colour, linewidth=1)
-            else:
-                assert element.move_style == geometry.MoveStyle.CUT
-                plt.plot(x, y, linestyle='--', c=cut_colour, linewidth=1)
-
-
-def generate_tool_path(shape, step_size):
+def generate_tool_path(shapes, step_size, inner=True):
     """ Calculate the toolpath. """
-    toolpath = geometry.Pocket(
-            shape,
-            step_size,
-            #geometry.ArcDir.Closest,
-            geometry.ArcDir.CW,
-            #geometry.ArcDir.CCW,
-            generate=True,
-            #starting_point=Point(-39.9, 11.8),
-            #starting_radius=2.5,
-            debug=True)
+
+    if inner:
+        # Create a polygon that represents an area that does not need cut.
+        already_cut = shapes.geoms[0].buffer(-8)
+
+        toolpath = geometry.Pocket(
+                shapes,
+                step_size,
+                geometry.ArcDir.Closest,
+                #geometry.ArcDir.CW,
+                already_cut=already_cut,
+                generate=True,
+                #starting_point=Point(-23, 20),
+                starting_radius=3.5,
+                debug=True)
+    else:
+        already_cut = Polygon()
+        all_pockets = MultiPolygon()
+        for shape in shapes.geoms:
+            filled_shape = Polygon(shape.exterior)
+            desired_pocket = Polygon(filled_shape.exterior).buffer(6).difference(filled_shape)
+            cut = desired_pocket.difference(filled_shape.buffer(4))
+            already_cut = already_cut.union(cut)
+            all_pockets = all_pockets.union(desired_pocket)
+
+        toolpath = geometry.Pocket(
+                all_pockets,
+                step_size,
+                geometry.ArcDir.Closest,
+                already_cut=already_cut,
+                generate=True,
+                starting_point_tactic = geometry.StartPointTactic.PERIMETER,
+                #starting_point=Point(0, 42.5),
+                starting_radius=0.5,
+                debug=True)
+
+    display_outline(already_cut)
 
     timeslice = 1000  # ms
     for index, progress in enumerate(toolpath.get_arcs(timeslice)):
@@ -191,18 +196,17 @@ def main(argv):
     print(f"filename: {filename}\n step_size: {step_size}\n")
 
     modelspace = dxf_data.modelspace()
-    shape = dxf.dxf_to_polygon(modelspace).geoms[-1]
-    #shape = dxf.dxf_to_polygon(modelspace).geoms[0]
+    shapes = dxf.dxf_to_polygon(modelspace)
 
-    toolpath = generate_tool_path(shape, step_size)
-    # Call toolpath.calculate_path() to scrap the existing and regenerate toolpath.
+    #toolpath = generate_tool_path(shapes, step_size, inner=True)
+    toolpath = generate_tool_path(shapes, step_size, inner=False)
 
-    display_outline(shape)
-    display_entry_point(toolpath)
-    #display_starting_circle(toolpath)
+    display_outline(shapes)
     display_toolpath(toolpath)
-    display_voronoi(toolpath)
-    # display_visited_voronoi_edges(toolpath)
+    display_entry_point(toolpath)
+    #display_voronoi(toolpath)
+    #display_visited_voronoi_edges(toolpath)
+    display_start_point(toolpath)
 
     plt.gca().set_aspect('equal')
     plt.show()

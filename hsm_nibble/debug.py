@@ -20,10 +20,7 @@ except ImportError:
 
 from shapely.geometry import MultiPolygon, Polygon  # type: ignore
 
-try:
-    from voronoi_centers import VoronoiCenters  # type: ignore
-except ImportError:
-    from cam.voronoi_centers import VoronoiCenters  # type: ignore
+from hsm_nibble.voronoi_centers import VoronoiCenters  # type: ignore
 
 class Display:
     """

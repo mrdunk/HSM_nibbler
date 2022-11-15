@@ -8,7 +8,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from shapely.geometry import LineString, Point, Polygon
 
-import geometry
+import hsm_nibble.geometry as geometry
 
 
 ACCURACY = 0.05

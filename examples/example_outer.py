@@ -2,16 +2,22 @@
 """
 Experimenting with CNC machining toolpaths.
 This program is a demo which uses the main library file on test .dxf CAD files.
+
+The demo shows how to calculate a HSM path on the outside of the shape to be cut.
+"geometry.Pocket(...)" takes an "already_cut" parameter which represents the outer boundary of the
+area to be cut. eg: The edge of the stock size.
 """
 
+import os
 import sys
 
 import ezdxf
 import matplotlib.pyplot as plt    # type: ignore
 from shapely.geometry import box, LinearRing, LineString, MultiPolygon, Point, Polygon  # type: ignore
 
-import dxf
-import geometry
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from hsm_nibble import dxf
+from hsm_nibble import geometry
 
 
 def display_outline(shape, colour="blue"):

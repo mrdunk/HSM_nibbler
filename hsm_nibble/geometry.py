@@ -31,22 +31,11 @@ from shapely.affinity import rotate  # type: ignore
 from shapely.geometry import box, LinearRing, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon  # type: ignore
 from shapely.ops import linemerge, split, unary_union  # type: ignore
 
-DEBUG_DISPLAY = None
-try:
-    from debug import Display
-    from voronoi_centers import (
-            round_coord, start_point_perimeter, start_point_widest, VoronoiCenters)  # type: ignore
-    from helpers import log  # type: ignore
-    DEBUG_DISPLAY = Display()
-except ImportError:
-    try:
-        from cam.debug import Display  # type: ignore
-        DEBUG_DISPLAY = Display()
-    except ImportError:
-        pass
-    from cam.voronoi_centers import (  # type: ignore
-            round_coord, start_point_perimeter, start_point_widest, VoronoiCenters)
-    from cam.helpers import log  # type: ignore
+from hsm_nibble.debug import Display
+from hsm_nibble.voronoi_centers import (
+        round_coord, start_point_perimeter, start_point_widest, VoronoiCenters)  # type: ignore
+from hsm_nibble.helpers import log  # type: ignore
+DEBUG_DISPLAY = Display()
 
 
 # Filter arcs that are entirely within this distance of a pocket edge.

@@ -15,15 +15,15 @@ import sys
 import time
 
 import ezdxf
-import numpy as np  # type: ignore
 import matplotlib.pyplot as plt  # type: ignore
 import matplotlib.patches as patches  # type: ignore
 from shapely.geometry import LineString, MultiLineString, MultiPolygon, Polygon  # type: ignore
 from shapely.ops import linemerge, unary_union  # type: ignore
 from tabulate import tabulate
 
-import dxf
-import geometry
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from hsm_nibble import dxf
+from hsm_nibble import geometry
 
 break_count: int = 0
 results = []

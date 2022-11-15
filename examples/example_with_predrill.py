@@ -2,19 +2,25 @@
 """
 Experimenting with CNC machining toolpaths.
 This program is a demo which uses the main library file on test .dxf CAD files.
+
+The demo shows how to calculate a HSM path on the inside of the shape to be cut
+and assumes the cut starts at a pre-drilled hole.
 """
 
 from typing import List, Tuple
 
+import os
 import sys
 import math
 import ezdxf
 import matplotlib.pyplot as plt    # type: ignore
 from shapely.affinity import rotate  # type: ignore
 from shapely.geometry import Point, LineString  # type: ignore
-import dxf
-import geometry
-from voronoi_centers import start_point_widest
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from hsm_nibble import dxf
+from hsm_nibble import geometry
+from hsm_nibble.voronoi_centers import start_point_widest
 
 
 def print_entity(entity: ezdxf.entities.DXFGraphic, indent: int = 0):

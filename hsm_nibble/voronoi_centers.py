@@ -29,10 +29,7 @@ from shapely.validation import make_valid  # type: ignore
 
 import pyvoronoi  # type: ignore
 
-try:
-    from helpers import log  # type: ignore
-except ImportError:
-    from cam.helpers import log  # type: ignore
+from hsm_nibble.helpers import log  # type: ignore
 
 Vertex = Tuple[float, float]
 
