@@ -17,13 +17,18 @@ import time
 import ezdxf
 import matplotlib.pyplot as plt  # type: ignore
 import matplotlib.patches as patches  # type: ignore
-from shapely.geometry import LineString, MultiLineString, MultiPolygon, Polygon  # type: ignore
+from shapely.geometry import LineString, MultiLineString, MultiPolygon, Polygon, Point  # type: ignore
 from shapely.ops import linemerge, unary_union  # type: ignore
 from tabulate import tabulate
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from hsm_nibble import dxf
 from hsm_nibble import geometry
+
+#import warnings
+#from shapely.errors import ShapelyDeprecationWarning
+#warnings.filterwarnings("error", category=ShapelyDeprecationWarning)
+
 
 break_count: int = 0
 results = []
@@ -36,6 +41,7 @@ Result = NamedTuple("Result", [
     ("cut_ratio", float),
     ("crash_ratio", float),
     ("dangerous_crash_count", int),
+    ("disjointed_path_count", int),
 ])
 
 Error = NamedTuple("Error", [
@@ -199,7 +205,17 @@ def test_file(
 
     cut_area_parts = []
     crash_area_parts = []
+
+    disjointed_path_count = 0
+    last_element = None
     for element in toolpath.path:
+        if last_element is not None:
+            if (not last_element.end.equals_exact(element.start, 6) or
+                 not Point(last_element.path.coords[-1]).equals_exact(
+                     Point(element.path.coords[0]), 6)):
+                disjointed_path_count += 1
+        last_element = element
+
         if type(element).__name__ == "Arc":
             new_cut = element.path.buffer(overlap / 2)
             cut_area = cut_area.union(new_cut)
@@ -250,7 +266,8 @@ def test_file(
         winding,
         cut_ratio,
         crash_ratio,
-        dangerous_crash_count
+        dangerous_crash_count,
+        disjointed_path_count,
     )
 
 

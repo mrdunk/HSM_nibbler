@@ -16,7 +16,7 @@ import time
 import ezdxf
 from shapely.geometry import Polygon  # type: ignore
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from hsm_nibble import dxf
 from hsm_nibble import geometry
 
@@ -176,6 +176,7 @@ def main(argv):
                     print(error)
                     print(f"during: {filepath}\t{overlap}\t{winding}")
                     failures.append(Error(filepath.split("/")[-1], overlap, winding, error,))
+                    #raise error
 
                 if break_count:
                     break

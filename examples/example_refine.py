@@ -20,7 +20,7 @@ from shapely.geometry import MultiPolygon, Point, Polygon, LineString  # type: i
 
 # This line is required if you want to use the local version of the code.
 # If you have installed HSM_nibble via PIP it is not required.
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from hsm_nibble import dxf
 from hsm_nibble import geometry

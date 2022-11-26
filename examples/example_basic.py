@@ -18,7 +18,7 @@ from shapely.geometry import Point, LineString  # type: ignore
 
 # This line is required if you want to use the local version of the code.
 # If you have installed HSM_nibble via PIP it is not required.
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from hsm_nibble import dxf
 from hsm_nibble import geometry
@@ -134,7 +134,15 @@ def display_starting_circle(toolpath, colour="orange"):
 
 def display_toolpath(toolpath, cut_colour="green", rapid_inside_colour="blue", rapid_outside_colour="orange"):
     # Display path.
+    last_element = None
+
     for element in toolpath.path:
+        if last_element is not None:
+            assert last_element.end.equals_exact(element.start, 6)
+            assert Point(last_element.path.coords[-1]
+                    ).equals_exact(Point(element.path.coords[0]), 6)
+        last_element = element
+
         if type(element).__name__ == "Arc":
             x, y = element.path.xy
             if element.debug:

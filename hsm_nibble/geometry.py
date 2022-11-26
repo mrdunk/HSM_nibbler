@@ -387,6 +387,51 @@ def _colapse_dupe_points(line: LineString) -> Optional[LineString]:
     return LineString(points)
 
 
+def split_line_by_poly(line: LineString, poly: Polygon) -> MultiLineString:
+    """
+    split() sometimes fails if line shares a point with one of poly's rings.
+    """
+
+    #rings = [poly.exterior] + list(poly.interiors)
+    #new_lines = []
+    #lines = [line]
+    #for ring in rings:
+    #    for line in lines:
+    #        try:
+    #            split_line = split(line, LineString(ring))
+    #        except TypeError:
+    #            split_line = MultiLineString([line])
+    #        new_lines.extend(split_line.geoms)
+    #    lines = new_lines
+    #    new_lines = []
+    #return MultiLineString(lines)
+
+    try:
+        split_lines = list(split(line, poly).geoms)
+    except TypeError:
+        if line.intersects(poly):
+            split_lines = line.intersection(poly)
+            if isinstance(split_lines, LineString):
+                split_lines = [split_lines]
+            else:
+                split_lines = list(split_lines.geoms)
+
+        split_lines = [line]
+    if len(split_lines) <= 1:
+        return MultiLineString(split_lines)
+    
+    last_line = split_lines[0]
+    new_split_lines = [last_line]
+    for split_line in split_lines[1:]:
+        if split_line.coords[0] != last_line.coords[-1]:
+            assert line.intersects(poly)
+            new_split_lines.append(LineString([last_line.coords[-1], split_line.coords[0]]))
+        new_split_lines.append(split_line)
+        last_line = split_line
+
+    return MultiLineString(new_split_lines)
+    
+
 class BaseGeometry:
     # Area we have calculated arcs for. Calculated by appending full circles.
     calculated_area_total: Polygon
@@ -417,7 +462,7 @@ class BaseGeometry:
         assert self.calculated_area_total is not self.cut_area_total
 
         self._filter_input_geometry()
-        self.dilated_polygon = self.polygon.buffer(self.step / 10)
+        self.dilated_starting_polygon = self.polygon.buffer(self.step / 10)
 
     def _filter_input_geometry(self) -> None:
         """Remove any tiny polygons from a MultiPolygon. """
@@ -580,24 +625,19 @@ class BaseGeometry:
         assert self.last_arc
         lines = []
         path = LineString([self.last_arc.end, next_arc.start])
-        dilation = (self.step / 2) - (self.step / 20)
 
         inside_pocket = (
-                path.covered_by(self.dilated_polygon)
+                path.covered_by(self.dilated_starting_polygon)
                 or path.covered_by(self.cut_area_total)
                 )
 
         if inside_pocket:
-            # Whole path is inside pocket and is already cut.
-            try:
-                split_path = split(path, self.cut_area_total)
-            except ValueError:
-                split_path = MultiLineString([path])
-            except TypeError:
-                split_path = MultiLineString([path])
+            # Whole path is inside pocket.
+            split_path = split_line_by_poly(path, self.cut_area_total)
 
             for part in split_path.geoms:
                 assert part.type == "LineString"
+                assert len(part.coords) == 2
 
                 mid = part.interpolate(0.5, normalized=True)
 
@@ -606,7 +646,7 @@ class BaseGeometry:
                     move_style = MoveStyle.RAPID_INSIDE
 
                 line = LineData(
-                        Point(part.coords[0]), Point(part.coords[-1]), part, move_style)
+                        Point(part.coords[0]), Point(part.coords[-1]), part, move_style,)
                 if line.path.length > SHORTEST_RAPID:
                     lines.append(line)
             # Shapely paths are not particularly accurate.
@@ -616,16 +656,18 @@ class BaseGeometry:
                         self.last_arc.end,
                         lines[0].end,
                         lines[0].path,
-                        lines[0].move_style)
+                        lines[0].move_style,
+                        )
                 lines[-1] = LineData(
                         lines[-1].start,
                         next_arc.start,
                         lines[-1].path,
-                        lines[-1].move_style)
+                        lines[-1].move_style,
+                        )
         else:
             # Path is not entirely inside pocket or crosses uncut area.
             move_style = MoveStyle.RAPID_OUTSIDE
-            line = LineData(self.last_arc.end, next_arc.start, path, move_style)
+            line = LineData(self.last_arc.end, next_arc.start, path, move_style,)
             if line.path.length > SHORTEST_RAPID:
                 lines.append(line)
 
@@ -840,7 +882,7 @@ class Pocket(BaseGeometry):
                     polygons={
                         "previously_cut": self.starting_cut_area,
                         "to_cut": self.polygon,
-                        "to_cut_dilated": self.dilated_polygon,
+                        "to_cut_dilated": self.dilated_starting_polygon,
                         #"cut_progress": self.calculated_area_total,
                         },
                     voronoi=self.voronoi,
