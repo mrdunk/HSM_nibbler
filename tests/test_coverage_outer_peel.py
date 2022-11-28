@@ -320,8 +320,8 @@ def main():
         filepaths += glob(path)
     windings = [geometry.ArcDir.CW, geometry.ArcDir.CCW]
     #windings = [geometry.ArcDir.CW, ]
-    #overlaps = [0.4, 0.8, 1.6, 3.2, 6.4]
-    overlaps = [1.6, 3.2, 6.4]
+    overlaps = [0.4, 0.8, 1.6, 3.2, 6.4]
+    #overlaps = [1.6, 3.2, 6.4]
     #overlaps = [0.4, 1.6]
     count = 0
     total_count = len(filepaths) * len(windings) * len(overlaps)
@@ -339,7 +339,7 @@ def main():
                     print(error)
                     print(f"during: {filepath}\t{overlap}\t{winding}")
                     errors.append(Error(filepath, overlap, winding, error))
-                    #raise error
+                    raise error
 
                 if break_count:
                     break

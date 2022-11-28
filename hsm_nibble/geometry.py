@@ -405,9 +405,7 @@ def split_line_by_poly(line: LineString, poly: Union[Polygon, MultiPolygon]) -> 
         for l in lines:
             try:
                 split_line = split(l, LineString(ring))
-            except TypeError:
-                split_line = MultiLineString([l])
-            except ValueError:
+            except (GeometryTypeError, TypeError, ValueError):
                 split_line = MultiLineString([l])
             new_lines.extend(split_line.geoms)
         lines = new_lines
@@ -662,7 +660,8 @@ class BaseGeometry:
                 assert len(part.coords) == 2
 
                 move_style = MoveStyle.CUT
-                if part.intersection(self.cut_area_total).length > part.length - self.step / 10:
+                if part.intersection(self.cut_area_total).length > part.length - self.step / 20:
+                #if part.covered_by(self.cut_area_total):
                     move_style = MoveStyle.RAPID_INSIDE
 
                 line = LineData(
@@ -670,6 +669,7 @@ class BaseGeometry:
                         Point(part.coords[-1]),
                         part,
                         move_style,)
+
                 if line.path.length > SHORTEST_RAPID:
                     lines.append(line)
             lines.append(last_line)
