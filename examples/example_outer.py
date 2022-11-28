@@ -125,6 +125,8 @@ def main(argv):
     modelspace = dxf_data.modelspace()
 
     shapes = dxf.dxf_to_polygon(modelspace)
+    if shapes.is_valid == False:
+        shapes = shapes.buffer(0)
 
     material_bounds = shapes.buffer(20 * step_size).bounds
     material = box(*material_bounds)
@@ -133,11 +135,6 @@ def main(argv):
     for shape in shapes.geoms:
         already_cut = already_cut.difference(Polygon(shape.exterior))
 
-    #toolpath = geometry.OutsidePocketSimple(
-    #        shapes[0],
-    #        step_size,
-    #        geometry.ArcDir.Closest,
-    #        generate=True)
     toolpath = geometry.Pocket(
             shapes,
             step_size,

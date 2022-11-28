@@ -18,7 +18,7 @@ import numpy as np
 import ezdxf
 import matplotlib.pyplot as plt  # type: ignore
 import matplotlib.patches as patches  # type: ignore
-from shapely.geometry import LineString, MultiLineString, MultiPolygon, Polygon, Point  # type: ignore
+from shapely.geometry import box, LineString, MultiLineString, MultiPolygon, Polygon, Point  # type: ignore
 from shapely.ops import linemerge, unary_union  # type: ignore
 from tabulate import tabulate
 
@@ -194,15 +194,32 @@ def test_file(
     dxf_data = ezdxf.readfile(filepath)
     modelspace = dxf_data.modelspace()
 
-    shape = dxf.dxf_to_polygon(modelspace).geoms[-1]
-    shape = shape.buffer(0)
+    shapes = dxf.dxf_to_polygon(modelspace)
+    if shapes.is_valid == False:
+        shapes = shapes.buffer(0)
+    if isinstance(shapes, Polygon):
+        shapes = MultiPolygon([shapes])
+
+    material_bounds = shapes.buffer(20 * overlap).bounds
+    material = box(*material_bounds)
+
+    already_cut = material
+    for shape in shapes.geoms:
+        already_cut = already_cut.difference(Polygon(shape.exterior))
 
     time_run = time.time()
-    toolpath = geometry.Pocket(shape, overlap, winding, generate=False)
+    toolpath = geometry.Pocket(
+            shapes,
+            overlap,
+            winding,
+            already_cut=already_cut,
+            generate=False,
+            starting_point_tactic = geometry.StartPointTactic.PERIMETER,
+            debug=True)
     time_run -= time.time()
 
-    cut_area = Polygon()
-    crash_area = Polygon()
+    cut_area = Polygon(already_cut)
+    newly_cut_area = Polygon()
 
     combined_path = []
     combined_rapid_inside = []
@@ -224,13 +241,15 @@ def test_file(
         if type(element).__name__ == "Arc":
             new_cut = element.path.buffer(overlap / 2)
             cut_area = cut_area.union(new_cut)
+            newly_cut_area = newly_cut_area.union(new_cut)
 
             if show_arcs:
                 combined_path.append(element.path)
 
-        if type(element).__name__ == "Line":
+        elif type(element).__name__ == "Line":
             if element.move_style == geometry.MoveStyle.RAPID_INSIDE:
-                crash = element.path.buffer(overlap / 2).difference(cut_area)
+                new_cut = element.path.buffer(overlap / 2)
+                crash = new_cut.difference(cut_area)
                 crash_area_parts.append(crash)
                 if show_arcs:
                     combined_rapid_inside.append(element.path)
@@ -240,6 +259,7 @@ def test_file(
             elif element.move_style == geometry.MoveStyle.CUT:
                 if show_arcs:
                     combined_path.append(element.path)
+
     crash_area = unary_union(crash_area_parts)
 
     uncut_area = toolpath.polygon.difference(cut_area)
@@ -258,7 +278,7 @@ def test_file(
             combined_rapid_inside,
             combined_rapids,
             toolpath.polygon,
-            cut_area,
+            newly_cut_area,
             crash_area,
             filename,
             overlap,
