@@ -1,0 +1,8 @@
+pyvoronoi>=1.0.7
+shapely>=1.8.4, <1.9.0
+
+tabulate
+argparse
+glob2
+ezdxf
+matplotlib

@@ -7,6 +7,7 @@ Run code against .dxf test patterns.
 from typing import NamedTuple, Tuple
 
 from glob import glob
+import os
 import signal
 import sys
 from tabulate import tabulate
@@ -15,8 +16,10 @@ import time
 import ezdxf
 from shapely.geometry import Polygon  # type: ignore
 
-import dxf
-import geometry
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from hsm_nibble import dxf
+from hsm_nibble import geometry
+
 
 break_count: int = 0
 
@@ -144,7 +147,7 @@ def main(argv):
         help(argv[0])
         return 0
 
-    paths = ["../**/*.dxf", "./**/*.dxf"]
+    paths = ["../test_cases/*.dxf", "./test_cases/*.dxf"]
     if len(argv) >= 2:
         paths = [argv[1]]
 
@@ -173,6 +176,7 @@ def main(argv):
                     print(error)
                     print(f"during: {filepath}\t{overlap}\t{winding}")
                     failures.append(Error(filepath.split("/")[-1], overlap, winding, error,))
+                    #raise error
 
                 if break_count:
                     break

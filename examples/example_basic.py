@@ -2,20 +2,30 @@
 """
 Experimenting with CNC machining toolpaths.
 This program is a demo which uses the main library file on test .dxf CAD files.
+
+The demo shows how to calculate a HSM path on the inside of the shape to be cut.
 """
 
 from typing import List, Tuple
 
+import os
 import sys
 import math
 import ezdxf
 import matplotlib.pyplot as plt    # type: ignore
 from shapely.affinity import rotate  # type: ignore
 from shapely.geometry import Point, LineString  # type: ignore
-import dxf
-import geometry
-from voronoi_centers import start_point_widest
 
+# This line is required if you want to use the local version of the code.
+# If you have installed HSM_nibble via PIP it is not required.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from hsm_nibble import dxf
+from hsm_nibble import geometry
+
+#import warnings
+#from shapely.errors import ShapelyDeprecationWarning
+#warnings.filterwarnings("error", category=ShapelyDeprecationWarning)
 
 def print_entity(entity: ezdxf.entities.DXFGraphic, indent: int = 0):
     """ Display some debug information about a DXF file. """
@@ -51,9 +61,9 @@ def display_outline(shape, colour="blue"):
         x, y = interior.xy
         plt.plot(x, y, c=colour, linewidth=2)
 
-def display_voronoi(voronoi, colour="red"):
+def display_voronoi(toolpath, colour="red"):
     """ Display the voronoi edges. These are equidistant from the shape's edges. """
-    for edge in voronoi.edges.values():
+    for edge in toolpath.voronoi.edges.values():
         x = []
         y = []
         for point in edge.coords:
@@ -124,7 +134,15 @@ def display_starting_circle(toolpath, colour="orange"):
 
 def display_toolpath(toolpath, cut_colour="green", rapid_inside_colour="blue", rapid_outside_colour="orange"):
     # Display path.
+    last_element = None
+
     for element in toolpath.path:
+        if last_element is not None:
+            assert last_element.end.equals_exact(element.start, 6)
+            assert Point(last_element.path.coords[-1]
+                    ).equals_exact(Point(element.path.coords[0]), 6)
+        last_element = element
+
         if type(element).__name__ == "Arc":
             x, y = element.path.xy
             if element.debug:
@@ -142,19 +160,18 @@ def display_toolpath(toolpath, cut_colour="green", rapid_inside_colour="blue", r
                 assert element.move_style == geometry.MoveStyle.CUT
                 plt.plot(x, y, linestyle='--', c=cut_colour, linewidth=1)
 
-def generate_voronoi(shape, starting_radius, step_size):
-    voronoi = start_point_widest(2.5, step_size, shape)
-    return voronoi
 
-def generate_tool_path(shape, starting_radius, step_size, voronoi):
+def generate_tool_path(shape, step_size):
     """ Calculate the toolpath. """
     toolpath = geometry.Pocket(
             shape,
             step_size,
-            geometry.ArcDir.Closest,
+            #geometry.ArcDir.Closest,
+            geometry.ArcDir.CW,
+            #geometry.ArcDir.CCW,
             generate=True,
-            voronoi=voronoi,
-            starting_radius=starting_radius,
+            #starting_point=Point(-39.9, 11.8),
+            #starting_radius=2.5,
             debug=True)
 
     timeslice = 1000  # ms
@@ -193,19 +210,14 @@ def main(argv):
     shape = dxf.dxf_to_polygon(modelspace).geoms[-1]
     #shape = dxf.dxf_to_polygon(modelspace).geoms[0]
 
-    starting_radius = 2.5
-    voronoi = generate_voronoi(shape, starting_radius, step_size)
-    print(f"Starting point at: {voronoi.start_point}")
-    print(f"Starting point maximum radius: {voronoi.max_starting_radius}  "
-          f"requested radius: {starting_radius}.\n")
-    toolpath = generate_tool_path(shape, starting_radius, step_size, voronoi)
+    toolpath = generate_tool_path(shape, step_size)
     # Call toolpath.calculate_path() to scrap the existing and regenerate toolpath.
 
     display_outline(shape)
     display_entry_point(toolpath)
     #display_starting_circle(toolpath)
     display_toolpath(toolpath)
-    display_voronoi(voronoi)
+    display_voronoi(toolpath)
     # display_visited_voronoi_edges(toolpath)
 
     plt.gca().set_aspect('equal')

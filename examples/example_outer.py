@@ -2,16 +2,25 @@
 """
 Experimenting with CNC machining toolpaths.
 This program is a demo which uses the main library file on test .dxf CAD files.
+
+The demo shows how to calculate a HSM path on the outside of the shape to be cut.
+"geometry.Pocket(...)" takes an "already_cut" parameter which represents the outer boundary of the
+area to be cut. eg: The edge of the stock size.
 """
 
+import os
 import sys
 
 import ezdxf
 import matplotlib.pyplot as plt    # type: ignore
 from shapely.geometry import box, LinearRing, LineString, MultiPolygon, Point, Polygon  # type: ignore
 
-import dxf
-import geometry
+# This line is required if you want to use the local version of the code.
+# If you have installed HSM_nibble via PIP it is not required.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from hsm_nibble import dxf
+from hsm_nibble import geometry
 
 
 def display_outline(shape, colour="blue"):
@@ -58,7 +67,14 @@ def display_visited_voronoi_edges(toolpath, colour="black"):
 
 def display_toolpath(toolpath, cut_colour="green", rapid_inside_colour="blue", rapid_outside_colour="orange"):
     # Display path.
+    last_element = None
     for element in toolpath.path:
+        if last_element is not None:
+            assert last_element.end.equals_exact(element.start, 6)
+            assert Point(last_element.path.coords[-1]
+                    ).equals_exact(Point(element.path.coords[0]), 6)
+        last_element = element
+
         if type(element).__name__ == "Arc":
             x, y = element.path.xy
             if element.debug:
@@ -75,6 +91,7 @@ def display_toolpath(toolpath, cut_colour="green", rapid_inside_colour="blue", r
             else:
                 assert element.move_style == geometry.MoveStyle.CUT
                 plt.plot(x, y, linestyle='--', c=cut_colour, linewidth=1)
+
 
 def display_start_point(toolpath, colour="purple"):
     plt.plot(toolpath.start_point.x, toolpath.start_point.y, marker='o', c=colour, markersize=10)
@@ -108,6 +125,8 @@ def main(argv):
     modelspace = dxf_data.modelspace()
 
     shapes = dxf.dxf_to_polygon(modelspace)
+    if shapes.is_valid == False:
+        shapes = shapes.buffer(0)
 
     material_bounds = shapes.buffer(20 * step_size).bounds
     material = box(*material_bounds)
@@ -116,11 +135,6 @@ def main(argv):
     for shape in shapes.geoms:
         already_cut = already_cut.difference(Polygon(shape.exterior))
 
-    #toolpath = geometry.OutsidePocketSimple(
-    #        shapes[0],
-    #        step_size,
-    #        geometry.ArcDir.Closest,
-    #        generate=True)
     toolpath = geometry.Pocket(
             shapes,
             step_size,

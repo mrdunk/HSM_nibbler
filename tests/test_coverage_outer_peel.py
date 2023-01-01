@@ -14,16 +14,22 @@ import signal
 import sys
 import time
 
+import numpy as np
 import ezdxf
-import numpy as np  # type: ignore
 import matplotlib.pyplot as plt  # type: ignore
 import matplotlib.patches as patches  # type: ignore
-from shapely.geometry import LineString, MultiLineString, MultiPolygon, Polygon  # type: ignore
+from shapely.geometry import box, LineString, MultiLineString, MultiPolygon, Polygon, Point  # type: ignore
 from shapely.ops import linemerge, unary_union  # type: ignore
 from tabulate import tabulate
 
-import dxf
-import geometry
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from hsm_nibble import dxf
+from hsm_nibble import geometry
+
+#import warnings
+#from shapely.errors import ShapelyDeprecationWarning
+#warnings.filterwarnings("error", category=ShapelyDeprecationWarning)
+
 
 break_count: int = 0
 results = []
@@ -36,6 +42,7 @@ Result = NamedTuple("Result", [
     ("cut_ratio", float),
     ("crash_ratio", float),
     ("dangerous_crash_count", int),
+    ("disjointed_path_count", int),
 ])
 
 Error = NamedTuple("Error", [
@@ -95,6 +102,7 @@ def init_argparse() -> argparse.ArgumentParser:
 
 def draw(
         combined_path: List[LineString],
+        combined_rapid_inside: List[LineString],
         combined_rapids: List[LineString],
         pocket: Polygon,
         cut_area: Polygon,
@@ -142,6 +150,8 @@ def draw(
 
     for path in combined_path:
         ax.plot(*path.xy, c="black", linewidth=0.01)
+    for path in combined_rapid_inside:
+        ax.plot(*path.xy, c="purple", linewidth=0.05, linestyle=(0, (5, 10)))
     for path in combined_rapids:
         ax.plot(*path.xy, c="red", linewidth=0.03)
 
@@ -184,41 +194,72 @@ def test_file(
     dxf_data = ezdxf.readfile(filepath)
     modelspace = dxf_data.modelspace()
 
-    shape = dxf.dxf_to_polygon(modelspace).geoms[-1]
-    shape = shape.buffer(0)
+    shapes = dxf.dxf_to_polygon(modelspace)
+    if shapes.is_valid == False:
+        shapes = shapes.buffer(0)
+    if isinstance(shapes, Polygon):
+        shapes = MultiPolygon([shapes])
+
+    material_bounds = shapes.buffer(20 * overlap).bounds
+    material = box(*material_bounds)
+
+    already_cut = material
+    for shape in shapes.geoms:
+        already_cut = already_cut.difference(Polygon(shape.exterior))
 
     time_run = time.time()
-    toolpath = geometry.Pocket(shape, overlap, winding, generate=False)
+    toolpath = geometry.Pocket(
+            shapes,
+            overlap,
+            winding,
+            already_cut=already_cut,
+            generate=False,
+            starting_point_tactic = geometry.StartPointTactic.PERIMETER,
+            debug=True)
     time_run -= time.time()
 
-    cut_area = Polygon()
-    crash_area = Polygon()
+    cut_area = Polygon(already_cut)
+    newly_cut_area = Polygon()
 
     combined_path = []
+    combined_rapid_inside = []
     combined_rapids = []
 
     cut_area_parts = []
     crash_area_parts = []
+
+    disjointed_path_count = 0
+    last_element = None
     for element in toolpath.path:
+        if last_element is not None:
+            if (not last_element.end.equals_exact(element.start, 6) or
+                 not Point(last_element.path.coords[-1]).equals_exact(
+                     Point(element.path.coords[0]), 6)):
+                disjointed_path_count += 1
+        last_element = element
+
         if type(element).__name__ == "Arc":
             new_cut = element.path.buffer(overlap / 2)
             cut_area = cut_area.union(new_cut)
-            #cut_area_parts.append(new_cut)
+            newly_cut_area = newly_cut_area.union(new_cut)
 
             if show_arcs:
                 combined_path.append(element.path)
-    #cut_area = unary_union(cut_area_parts)
 
-    #for element in toolpath.path:
-        if type(element).__name__ == "Line":
+        elif type(element).__name__ == "Line":
             if element.move_style == geometry.MoveStyle.RAPID_INSIDE:
-                crash = element.path.buffer(overlap / 2).difference(cut_area)
-                #crash_area = crash_area.union(crash)
+                new_cut = element.path.buffer(overlap / 2)
+                crash = new_cut.difference(cut_area)
                 crash_area_parts.append(crash)
                 if show_arcs:
+                    combined_rapid_inside.append(element.path)
+            elif element.move_style == geometry.MoveStyle.RAPID_OUTSIDE:
+                if show_arcs:
+                    combined_rapids.append(element.path)
+            elif element.move_style == geometry.MoveStyle.CUT:
+                if show_arcs:
                     combined_path.append(element.path)
-            elif show_arcs:
-                combined_rapids.append(element.path)
+
     crash_area = unary_union(crash_area_parts)
 
     uncut_area = toolpath.polygon.difference(cut_area)
@@ -234,9 +275,10 @@ def test_file(
     if output_path or output_display:
         draw(
             combined_path,
+            combined_rapid_inside,
             combined_rapids,
             toolpath.polygon,
-            cut_area,
+            newly_cut_area,
             crash_area,
             filename,
             overlap,
@@ -250,7 +292,8 @@ def test_file(
         winding,
         cut_ratio,
         crash_ratio,
-        dangerous_crash_count
+        dangerous_crash_count,
+        disjointed_path_count,
     )
 
 
@@ -278,6 +321,7 @@ def main():
     windings = [geometry.ArcDir.CW, geometry.ArcDir.CCW]
     #windings = [geometry.ArcDir.CW, ]
     overlaps = [0.4, 0.8, 1.6, 3.2, 6.4]
+    #overlaps = [1.6, 3.2, 6.4]
     #overlaps = [0.4, 1.6]
     count = 0
     total_count = len(filepaths) * len(windings) * len(overlaps)
@@ -295,7 +339,7 @@ def main():
                     print(error)
                     print(f"during: {filepath}\t{overlap}\t{winding}")
                     errors.append(Error(filepath, overlap, winding, error))
-                    #raise error
+                    raise error
 
                 if break_count:
                     break

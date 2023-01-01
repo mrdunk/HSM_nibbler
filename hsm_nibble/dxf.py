@@ -105,6 +105,9 @@ def dxf_to_polygon(modelspace) -> MultiPolygon:
                 continue
             if Polygon(parent).covers(ring):
                 holes.append(ring)
-        polygons.append(Polygon(parent, holes=holes))
+        polygon = Polygon(parent, holes=holes)
+        if not polygon.is_valid:
+            polygon = polygon.buffer(0)
+        polygons.append(polygon)
 
     return MultiPolygon(polygons)

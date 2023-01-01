@@ -2,18 +2,28 @@
 """
 Experimenting with CNC machining toolpaths.
 This program is a demo which uses the main library file on test .dxf CAD files.
+
+The demo shows how to calculate a HSM path on the outside of the shape to be cut.
+"geometry.Pocket(...)" takes an "already_cut" parameter which represents the outer boundary of the
+area to be cut. eg: The edge of the stock size.
 """
 
 from typing import List, Tuple
 
+import os
 import sys
 import math
 import ezdxf
 import matplotlib.pyplot as plt    # type: ignore
 from shapely.affinity import rotate  # type: ignore
 from shapely.geometry import MultiPolygon, Point, Polygon, LineString  # type: ignore
-import dxf
-import geometry
+
+# This line is required if you want to use the local version of the code.
+# If you have installed HSM_nibble via PIP it is not required.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from hsm_nibble import dxf
+from hsm_nibble import geometry
 
 def display_start_point(toolpath, colour="purple"):
     plt.plot(toolpath.start_point.x, toolpath.start_point.y, marker='o', c=colour, markersize=10)
@@ -120,9 +130,8 @@ def generate_tool_path(shapes, step_size, inner=True):
     """ Calculate the toolpath. """
 
     if inner:
-        #already_cut = Polygon()
+        # Create a polygon that represents an area that does not need cut.
         already_cut = shapes.geoms[0].buffer(-8)
-        #already_cut = already_cut.difference(Point(-20.93476, 0).buffer(1))
 
         toolpath = geometry.Pocket(
                 shapes,
@@ -150,7 +159,7 @@ def generate_tool_path(shapes, step_size, inner=True):
                 geometry.ArcDir.Closest,
                 already_cut=already_cut,
                 generate=True,
-                starting_point_tactic = geometry.StartPointTactic.PERIMITER,
+                starting_point_tactic = geometry.StartPointTactic.PERIMETER,
                 #starting_point=Point(0, 42.5),
                 starting_radius=0.5,
                 debug=True)
