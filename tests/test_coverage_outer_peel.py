@@ -20,6 +20,7 @@ import matplotlib.pyplot as plt  # type: ignore
 import matplotlib.patches as patches  # type: ignore
 from shapely.geometry import box, LineString, MultiLineString, MultiPolygon, Polygon, Point  # type: ignore
 from shapely.ops import linemerge, unary_union  # type: ignore
+from shapely.errors import GEOSException
 from tabulate import tabulate
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -267,7 +268,10 @@ def test_file(
     cut_ratio = round(1.0 - uncut_area.area / toolpath.polygon.area, 4)
     crash_ratio = round(crash_area.area / toolpath.polygon.area, 4)
 
-    eroded_crash_area = crash_area.buffer(-overlap / 20)
+    try:
+        eroded_crash_area = crash_area.buffer(-overlap / 20)
+    except GEOSException:
+        eroded_crash_area = Polygon()
     if eroded_crash_area.type == "Polygon":
         eroded_crash_area = MultiPolygon([eroded_crash_area])
     dangerous_crash_count = len(eroded_crash_area.geoms)

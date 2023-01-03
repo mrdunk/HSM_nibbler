@@ -249,7 +249,7 @@ class VoronoiCenters:
         Do some quick fixes on common issues.
         """
         fixed = make_valid(self.polygon)
-        while fixed.type == "MultiPolygon":
+        while fixed.geom_type == "MultiPolygon":
             bigest = None
             size = 0
             for geom in fixed.geoms:
@@ -264,7 +264,7 @@ class VoronoiCenters:
             # Knowing which piece to work on is a crap shoot.
             # It should be up to the client code to make the decision and correctly
             # format the input polygon.
-        if fixed.type == "Polygon":
+        if fixed.geom_type == "Polygon":
             self.polygon = fixed
 
         # Any jitter in input geometry may make points appear out of sequence
