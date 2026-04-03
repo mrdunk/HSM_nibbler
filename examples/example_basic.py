@@ -166,7 +166,7 @@ def generate_tool_path(shape, step_size):
     toolpath = geometry.Pocket(
             shape,
             step_size,
-            #geometry.ArcDir.Closest,
+            #geometry.ArcDir.CLOSEST,
             geometry.ArcDir.CW,
             #geometry.ArcDir.CCW,
             generate=True,

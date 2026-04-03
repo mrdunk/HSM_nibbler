@@ -138,7 +138,7 @@ def main(argv):
     toolpath = geometry.Pocket(
             shapes,
             step_size,
-            geometry.ArcDir.Closest,
+            geometry.ArcDir.CLOSEST,
             already_cut=already_cut,
             generate=True,
             starting_point_tactic = geometry.StartPointTactic.PERIMETER,

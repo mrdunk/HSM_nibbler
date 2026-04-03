@@ -11,7 +11,7 @@ Recognises the following environment variables:
 
 import os
 
-from typing import List, Optional, Union, Any
+from typing import Any, Dict, List, Optional, Union
 
 try:
     import matplotlib.pyplot as plt    # type: ignore
@@ -31,7 +31,10 @@ class Display:
     screen: bool = False
     initialised: bool = False
     count: int = 0
-    colours: List[str] = ["blue", "orange", "green", "cyan", "magenta", "purple", "brown", "grey", "olive", "pink", "yellow"]
+    colours: List[str] = [
+        "blue", "orange", "green", "cyan", "magenta",
+        "purple", "brown", "grey", "olive", "pink", "yellow",
+    ]
 
     def __init__(self):
         if not os.environ.get("HSM_DEBUG"):
@@ -42,10 +45,10 @@ class Display:
             return
 
         if os.environ.get("HSM_DEBUG_RES"):
-            self.resolution = int(os.environ.get("HSM_DEBUG_RES"))
+            self.resolution = int(os.environ["HSM_DEBUG_RES"])
 
         if os.environ.get("HSM_DEBUG_FILENAME"):
-            self.filename = os.environ.get("HSM_DEBUG_FILENAME")
+            self.filename = os.environ["HSM_DEBUG_FILENAME"]
 
         if os.environ.get("HSM_DEBUG_SCREEN"):
             self.screen = True
@@ -57,7 +60,7 @@ class Display:
         self.initialised = True
 
     def display(self,
-            polygons: Optional[List[Union[Polygon, MultiPolygon]]] = None,
+            polygons: Optional[Dict[Any, Union[Polygon, MultiPolygon]]] = None,
             voronoi: Optional[VoronoiCenters] = None,
             path: Optional[List] = None) -> None:
         if not self.initialised:
@@ -69,7 +72,7 @@ class Display:
         print(self.count)
 
         if polygons is None:
-            polygons = []
+            polygons = {}
 
         for index, key in enumerate(polygons.keys()):
             multi = polygons[key]
@@ -83,7 +86,7 @@ class Display:
                     plt.plot(x, y, c=colour, linewidth=0.01)
 
         if voronoi:
-            for edge in voronoi.edges.values():
+            for edge in voronoi.graph.edges.values():
                 x = []
                 y = []
                 for point in edge.coords:

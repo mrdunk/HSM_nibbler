@@ -5,11 +5,9 @@ Used by the test implementation main.py.
 
 from typing import List, Tuple
 
-from math import *
+from math import atan, atan2, ceil, cos, pi, sin, sqrt, tan
 
-from ezdxf.entities.lwpolyline import LWPolyline as DxfPolyline
-from ezdxf.query import EntityQuery as DxfPolylines
-from shapely.geometry import LineString, MultiLineString, Point, Polygon, LinearRing, MultiPoint, MultiPolygon  # type: ignore
+from shapely.geometry import LineString, MultiPolygon, Point, Polygon  # type: ignore
 
 CIRCLE_RES = 500
 
@@ -29,10 +27,10 @@ def weighted(p1, p2, alpha):
 
 def circle(x, y, r, n=None, sa=0, ea=2*pi):
     if n is None:
-        n = pi * r * GeometrySettings.RESOLUTION
+        n = pi * r * CIRCLE_RES
     n *= abs((ea - sa) / (2 * pi))
     n = ceil(n)
-    res = []
+    res: List[Tuple[float, float]] = []
     for i in range(n + 1):
         a = sa + i * (ea - sa) / n
         newpt = (x + r * cos(a), y + r * sin(a))
@@ -83,7 +81,7 @@ def dxf_to_polygon(modelspace) -> MultiPolygon:
         else:
             print(f"Unsupported dxf entity: {entity.dxftype()}")
 
-    parents = []
+    parents: List[LineString] = []
     for ring in rings:
         coveres = []
         covered_by = False

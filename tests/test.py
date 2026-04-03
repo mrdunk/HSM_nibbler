@@ -41,6 +41,8 @@ Error = NamedTuple("Error", [
     ("overlap", float),
     ("winding", geometry.ArcDir),
     ("error_message", str),
+    ("file_name", str),
+    ("line_num", int),
     ])
 
 def signal_handler(sig, frame):
@@ -133,8 +135,8 @@ def help(progname: str):
             "  {progname} [dxf_files_glob]\n"
             "eg:\n"
             "  {progname}\n"
-            "  {progname} ./some/dir/\*.dxf\n"
-            "  {progname} ./test_cases/curves\*.dxf\n".format(progname=progname))
+            "  {progname} ./some/dir/\\*.dxf\n"
+            "  {progname} ./test_cases/curves\\*.dxf\n".format(progname=progname))
 
 def main(argv):
     """
@@ -157,7 +159,7 @@ def main(argv):
     filepaths = []
     for path in paths:
         filepaths += glob(path)
-    windings = [geometry.ArcDir.CW, geometry.ArcDir.CCW, geometry.ArcDir.Closest]
+    windings = [geometry.ArcDir.CW, geometry.ArcDir.CCW, geometry.ArcDir.CLOSEST]
     #windings = [geometry.ArcDir.CW,]
     overlaps = [0.4, 0.8, 1.6, 3.2, 6.4]
     #overlaps = [0.4, 1.6]
@@ -175,9 +177,13 @@ def main(argv):
                 except Exception as error:
                     print(error)
                     print(f"during: {filepath}\t{overlap}\t{winding}")
-                    failures.append(Error(filepath.split("/")[-1], overlap, winding, error,))
-                    #raise error
-
+                    
+                    exc_type, exc_obj, exc_tb = sys.exc_info()
+                    file_name = os.path.split(exc_tb.tb_frame.f_code.co_filename)[-1]
+                    line_num = exc_tb.tb_lineno
+                    failures.append(Error(filepath.split("/")[-1], overlap, winding, str(error), file_name, line_num))
+                    print(failures[-1])
+                    raise error
                 if break_count:
                     break
             if break_count:

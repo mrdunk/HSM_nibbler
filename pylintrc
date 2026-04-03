@@ -1,0 +1,33 @@
+[MASTER]
+jobs = 1
+
+[MESSAGES CONTROL]
+disable =
+    attribute-defined-outside-init,
+    fixme,
+    missing-class-docstring,
+    missing-function-docstring,
+    too-few-public-methods,
+
+[FORMAT]
+indent-string = '    '
+max-line-length = 120
+# Long import lines with # type: ignore are acceptable
+ignore-long-lines = ^\s*(from|import)\s
+
+[BASIC]
+# Short names that appear throughout the codebase with clear local meaning
+good-names = i,j,k,l,p,r,n,a,x,y,pv,ds,de,dp,ex,Run,_
+
+[DESIGN]
+# VoronoiCenters.__init__ parses a full voronoi diagram in one pass
+max-locals = 20
+max-statements = 70
+# VoronoiCenters carries multiple dicts for edges/vertices
+max-attributes = 15
+# create_arc and VoronoiCenters.__init__ each take 5-6 params
+max-args = 7
+
+[TYPECHECK]
+# These packages ship no type stubs; all covered by # type: ignore at import sites
+ignored-modules = shapely,pyvoronoi,matplotlib,ezdxf

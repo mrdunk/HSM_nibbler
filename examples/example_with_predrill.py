@@ -160,7 +160,7 @@ def generate_tool_path(shape, starting_radius, step_size, voronoi):
     toolpath = geometry.Pocket(
             shape,
             step_size,
-            geometry.ArcDir.Closest,
+            geometry.ArcDir.CLOSEST,
             generate=True,
             voronoi=voronoi,
             starting_radius=starting_radius,

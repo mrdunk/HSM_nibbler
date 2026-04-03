@@ -47,9 +47,29 @@ examples/example_refine.py ./test_cases/thrash.dxf
 ```
 
 ## Other useful libraries in this repo
-The VoronoiCenters class in hsm_nibble/voronoi_centers.py is a wrapper around the pyvoronoi package.
-pyvoronoi only deals with straight lines and points. Not arcs.
-The VoronoiCenters class prunes the voroni diagram and tries to do same things when simplifying a voronoi diagram created from geometry containing arc and circles.
+The VoronoiCenters class in hsm_nibble/voronoi_centers.py is a wrapper around the [pyvoronoi](https://github.com/fabanc/pyvoronoi)
+package.  
+Unfortunately pyvoronoi only deals with straight lines and points. Not arcs.  
+The VoronoiCenters class prunes the voroni diagram and tries to do same things when simplifying a voronoi diagram created from geometry containing arc and circles like the [C++ Boost Voronoi library](https://www.boost.org/doc/libs/latest/libs/polygon/doc/voronoi_main.htm) does for C++.
+
+## Linting
+### mypy
+```
+mypy ./hsm_nibble/
+```
+
+## Testing
+There are several .dxf files in the test_cases directory. To prove the algorthm works as intended run the following:  
+```
+./tests/test.py
+./tests/test_coverage.py
+```
+
+Some unit tests exist:
+```
+./tests/test_arcs.py
+./tests/test_voronoi.py
+```
 
 ## Projects using this library
 - [DerpCAM](https://github.com/kfoltman/DerpCAM) A 2.5D CAM aimed at hobby CNC machine users.

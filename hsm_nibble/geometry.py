@@ -28,13 +28,12 @@ import math
 import time
 
 from shapely.affinity import rotate  # type: ignore
-from shapely.geometry import box, GeometryCollection, LinearRing, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon  # type: ignore
-from shapely.ops import linemerge, split, unary_union  # type: ignore
+from shapely.geometry import LinearRing, LineString, MultiLineString, MultiPolygon, Point, Polygon  # type: ignore
+from shapely.ops import linemerge, split  # type: ignore
 from shapely.errors import GeometryTypeError
 
 from hsm_nibble.debug import Display
-from hsm_nibble.voronoi_centers import (
-        round_coord, start_point_perimeter, start_point_widest, VoronoiCenters)  # type: ignore
+from hsm_nibble.voronoi_centers import VoronoiCenters  # type: ignore
 from hsm_nibble.helpers import log  # type: ignore
 DEBUG_DISPLAY = Display()
 
@@ -70,7 +69,7 @@ CORNER_ZOOM_EFFECT = 1.0
 class ArcDir(Enum):
     CW = 0
     CCW = 1
-    Closest = 2
+    CLOSEST = 2
 
 class MoveStyle(Enum):
     RAPID_OUTSIDE = 0
@@ -82,7 +81,7 @@ class StartPointTactic(Enum):
     WIDEST = 1     # Starting point hint for inner pockets.
 
 
-ArcData = NamedTuple("Arc", [
+ArcData = NamedTuple("ArcData", [
     ("origin", Point),
     ("radius", Optional[float]),
     ("start", Optional[Point]),
@@ -98,7 +97,7 @@ ArcData = NamedTuple("Arc", [
     ("debug", Optional[str])
 ])
 
-LineData = NamedTuple("Line", [
+LineData = NamedTuple("LineData", [
     ("start", Point),
     ("end", Point),
     ("path", LineString),
@@ -116,9 +115,8 @@ def clean_linear_ring(ring: LinearRing) -> LinearRing:
             first_point = point
         if point == prev_point:
             continue
-        else:
-            new_ring.append(point)
-            prev_point = point
+        new_ring.append(point)
+        prev_point = point
     assert prev_point == first_point  # This is a loop.
 
     return LinearRing(new_ring)
@@ -132,7 +130,7 @@ def clean_polygon(polygon: Polygon) -> Polygon:
     return Polygon(exterior, holes=holes)
 
 def clean_multipolygon(multi: MultiPolygon) -> MultiPolygon:
-    if multi.type != "MultiPolygon":
+    if multi.geom_type != "MultiPolygon":
         multi = MultiPolygon([multi])
     polygons = []
     for polygon in multi.geoms:
@@ -215,7 +213,7 @@ def create_arc_from_path(
         path: LineString,
         radius: float,
         winding_dir: Optional[ArcDir] = None,
-        debug: str = None
+        debug: Optional[str] = None
 ) -> ArcData:
     """
     Save data for the arc sections of the path.
@@ -247,10 +245,10 @@ def mirror_arc(
 
     if winding_dir is None:
         assert (arc_data.winding_dir == ArcDir.CW and
-                arc_data.span_angle is not None and 
+                arc_data.span_angle is not None and
                 arc_data.span_angle > 0 or
                 arc_data.winding_dir == ArcDir.CCW and
-                arc_data.span_angle is not None and 
+                arc_data.span_angle is not None and
                 arc_data.span_angle < 0)
 
         if arc_data.winding_dir == ArcDir.CW:
@@ -265,7 +263,7 @@ def mirror_arc(
             [((2 * x_line - point[0]), point[1]) for point in arc_data.path.coords]
             )
     origin = Point(2 * x_line - arc_data.origin.x, arc_data.origin.y)
-    
+
     return ArcData(
             origin,
             arc_data.radius,
@@ -279,7 +277,7 @@ def mirror_arc(
 
 def complete_arc(
         arc_data: ArcData,
-        winding_dir_: ArcDir = None
+        winding_dir_: Optional[ArcDir] = None
         ) -> Optional[ArcData]:
     """
     Calculate start_angle, span_angle and radius.
@@ -290,7 +288,7 @@ def complete_arc(
     winding_dir = winding_dir_
     if winding_dir is None:
         winding_dir = arc_data.winding_dir
-    if winding_dir is None or winding_dir == ArcDir.Closest:
+    if winding_dir is None or winding_dir == ArcDir.CLOSEST:
         winding_dir = ArcDir.CW
 
     # Make copy of path since we may need to modify it.
@@ -347,7 +345,7 @@ def complete_arc(
 def arcs_from_circle_diff(
         circle: ArcData,
         already_cut: Polygon,
-        debug: str = None
+        debug: Optional[str] = None
         ) -> List[ArcData]:
     """ Return any sections of circle that do not overlap already_cut. """
     if not already_cut:
@@ -358,9 +356,9 @@ def arcs_from_circle_diff(
     line_diff = circle.path.difference(already_cut)
     if not line_diff:
         return []
-    if line_diff.type == "MultiLineString":
+    if line_diff.geom_type == "MultiLineString":
         line_diff = linemerge(line_diff)
-    if line_diff.type != "MultiLineString":
+    if line_diff.geom_type != "MultiLineString":
         line_diff = MultiLineString([line_diff])
 
     arcs = []
@@ -423,11 +421,12 @@ def split_line_by_poly(line: LineString, poly: Union[Polygon, MultiPolygon]) -> 
                 checked_lines.append(LineString([last_new_line.coords[-1], new_line.coords[0]]))
         checked_lines.append(new_line)
         last_new_line = new_line
+    assert last_new_line is not None
     if last_new_line.coords[-1] != line.coords[-1]:
         checked_lines.append(LineString([last_new_line.coords[-1], line.coords[-1]]))
 
     return MultiLineString(checked_lines)
-    
+
 
 class BaseGeometry:
     # Area we have calculated arcs for. Calculated by appending full circles.
@@ -454,22 +453,58 @@ class BaseGeometry:
         self.pending_arc_queues: List[List[ArcData]] = []
         self.last_arc: Optional[ArcData] = None
 
-        self.calculated_area_total = self.starting_cut_area
-        self.cut_area_total = Polygon(self.starting_cut_area)
+        self.calculated_area_total = self.starting_cut_area.buffer(0)
+        self.cut_area_total = self.starting_cut_area.buffer(0)
+        # Not the same instance.
         assert self.calculated_area_total is not self.cut_area_total
 
         self._filter_input_geometry()
         self.dilated_starting_polygon = self.polygon.buffer(self.step / 10)
 
     def _filter_input_geometry(self) -> None:
-        """Remove any tiny polygons from a MultiPolygon. """
-        min_area = (self.step / 20) ** 2
+        """Normalise and validate the input polygon before path generation.
 
-        if self.polygon.type != "MultiPolygon":
-            self.polygon = MultiPolygon([self.polygon])
+        Accepts either a Polygon or MultiPolygon and ensures self.polygon is
+        always a MultiPolygon on exit.  Steps performed:
 
-        self.polygon = MultiPolygon([poly for poly in self.polygon.geoms
-                    if poly.buffer(-self.step / 20).area > min_area])
+        1. Coerce a bare Polygon into a single-element MultiPolygon.
+        2. Drop any non-Polygon sub-geometries (e.g. LineStrings or Points
+           that can appear after a boolean difference).
+        3. Repair each sub-polygon with buffer(0) if it is not valid.
+        4. Discard sub-polygons that vanish when inset by step/10 — these
+           are too small to contribute a meaningful toolpath arc.
+        5. Repair the reassembled MultiPolygon if overlapping sub-polygons
+           have made it invalid.
+        """
+        if self.polygon.geom_type == "Polygon":
+            geoms = [self.polygon]
+        else:
+            geoms = [g for g in self.polygon.geoms if g.geom_type == "Polygon"]
+
+        # Repair each sub-polygon individually, then filter out tiny ones.
+        repaired = []
+        for poly in geoms:
+            if not poly.is_valid:
+                poly = poly.buffer(0)
+            # buffer(0) on a self-intersecting polygon can return a MultiPolygon;
+            # flatten it so no geometry is silently dropped.
+            if poly.geom_type == "MultiPolygon":
+                candidates = list(poly.geoms)
+            elif poly.geom_type == "Polygon":
+                candidates = [poly]
+            else:
+                continue
+            for candidate in candidates:
+                if candidate.buffer(-self.step / 10).area <= 0:
+                    continue
+                repaired.append(candidate)
+
+        self.polygon = MultiPolygon(repaired)
+
+        # Repair the combined MultiPolygon if overlaps are present.
+        if not self.polygon.is_valid:
+            self.polygon = self.polygon.buffer(0)
+
 
     def _flush_arc_queues(self) -> None:
         while self.pending_arc_queues:
@@ -516,14 +551,13 @@ class BaseGeometry:
             to_process = self.pending_arc_queues.pop(0)
             self._arcs_to_path(to_process)
             return
-        else:
-            closest_queue: Optional[List[ArcData]]
-            for arc in new_arcs:
+        closest_queue: Optional[List[ArcData]]
+        for arc in new_arcs:
                 closest_queue = None
                 closest_queue_index = None
                 closest_dist = self.step
                 for queue_index, queue in enumerate(self.pending_arc_queues):
-                    if self.winding_dir == ArcDir.Closest:
+                    if self.winding_dir == ArcDir.CLOSEST:
                         combined_dist = 1
                         seperate_dist = 0
                     else:
@@ -577,7 +611,7 @@ class BaseGeometry:
 
             winding_dir = self.winding_dir
             last_arc = self.last_arc
-            if winding_dir == ArcDir.Closest:
+            if winding_dir == ArcDir.CLOSEST:
                 if last_arc is None:
                     winding_dir = ArcDir.CW
                 else:
@@ -642,7 +676,7 @@ class BaseGeometry:
                         path,
                         MoveStyle.CUT,
                         )]
-            
+
             split_for_last = path.interpolate(-self.step)
             last_line = LineData(
                     Point(split_for_last),
@@ -656,7 +690,7 @@ class BaseGeometry:
             split_path = split_line_by_poly(remaining_path, self.cut_area_total)
 
             for part in split_path.geoms:
-                assert part.type == "LineString"
+                assert part.geom_type == "LineString"
                 assert len(part.coords) == 2
 
                 move_style = MoveStyle.CUT
@@ -730,12 +764,12 @@ class Pocket(BaseGeometry):
             to_cut: Polygon,
             step: float,
             winding_dir: ArcDir,
-            already_cut: Polygon = None,
+            already_cut: Optional[Polygon] = None,
             generate: bool = False,
             voronoi: Optional[VoronoiCenters] = None,
             starting_point_tactic: StartPointTactic = StartPointTactic.WIDEST,
-            starting_point: Point = None,
-            starting_radius: float = None,
+            starting_point: Optional[Point] = None,
+            starting_radius: Optional[float] = None,
             debug: bool = False,
     ) -> None:
         """
@@ -787,10 +821,10 @@ class Pocket(BaseGeometry):
             if starting_point is not None:
                 voronoi = VoronoiCenters(complete_pocket, starting_point=starting_point)
             elif starting_point_tactic == StartPointTactic.WIDEST:
-                voronoi = start_point_widest(
+                voronoi = VoronoiCenters.for_widest_start(
                         self.starting_radius, step, complete_pocket, already_cut)
             elif starting_point_tactic == StartPointTactic.PERIMETER:
-                voronoi = start_point_perimeter(
+                voronoi = VoronoiCenters.for_perimeter_start(
                         self.starting_radius or step, complete_pocket, already_cut)
 
             assert voronoi is not None
@@ -827,13 +861,13 @@ class Pocket(BaseGeometry):
 
         self.path_len_progress: float = 0.0
         self.path_len_total: float = 0.0
-        for edge in self.voronoi.edges.values():
+        for edge in self.voronoi.graph.edges.values():
             self.path_len_total += edge.length
 
         # Used to detect when an arc is too close to the edge to be worthwhile.
         self.dilated_polygon_boundaries = []
         multi = self.polygon
-        if multi.type != "MultiPolygon":
+        if multi.geom_type != "MultiPolygon":
             multi = MultiPolygon([multi])
         for poly in multi.geoms:
             for ring in [poly.exterior] + list(poly.interiors):
@@ -1085,16 +1119,6 @@ class Pocket(BaseGeometry):
         converge = self._converge(0.76)
         converge.send(None)  # type: ignore
 
-        coverage_algos = [
-                #self._converge(0.75),
-                self._converge(0.76),
-                self._converge(0.74),
-                self._converge(0.78),
-                self._converge(0.72),
-                self._converge(0.7),
-                self._converge(0.8),
-                ]
-
         color_overide = None
 
         desired_step = min(self.step, (voronoi_edge.length - start_distance))
@@ -1205,8 +1229,7 @@ class Pocket(BaseGeometry):
 
         assert circle is not None
         self.last_circle = circle
-        self.calculated_area_total = self.calculated_area_total.union(
-                Polygon(circle.path))
+        self.calculated_area_total = self.calculated_area_total.union(Polygon(circle.path))
 
         filtered_arcs = []
         for arc in arcs:
@@ -1228,13 +1251,13 @@ class Pocket(BaseGeometry):
         line_coords: List[Tuple[float, float]] = []
 
         while True:
-            branches = self.voronoi.vertex_to_edges[vertex]
+            branches = self.voronoi.graph.vertex_to_edges[vertex]
             candidate = None
             longest = 0
             for branch in branches:
                 if branch not in self.visited_edges:
                     self.open_paths[branch] = vertex
-                    length = self.voronoi.edges[branch].length
+                    length = self.voronoi.graph.edges[branch].length
                     if candidate is None:
                         candidate = branch
                     elif BREADTH_FIRST and length < longest:
@@ -1248,7 +1271,7 @@ class Pocket(BaseGeometry):
                 break
 
             self.visited_edges.add(candidate)
-            edge_coords = self.voronoi.edges[candidate].coords
+            edge_coords = self.voronoi.graph.edges[candidate].coords
 
             if not line_coords:
                 line_coords = edge_coords
@@ -1303,13 +1326,7 @@ class Pocket(BaseGeometry):
                 self.path_len_progress -= best_dist
                 self.path_len_progress += dist
 
-                if dist < best_dist and False:
-                    # Getting worse not better or staying the same.
-                    # This can happen legitimately but is an indication the algorthm
-                    # may be stuck.
-                    stuck_count = int(stuck_count / 2)
-                else:
-                    best_dist = dist
+                best_dist = dist
                 self._queue_arcs(new_arcs)
 
                 if timeslice >= 0 and self.generate:
@@ -1369,9 +1386,9 @@ class Pocket(BaseGeometry):
 
         perimiter_point = voronoi.start_point
         assert perimiter_point is not None
-        voronoi_edge_index = voronoi.vertex_to_edges[perimiter_point.coords[0]]
+        voronoi_edge_index = voronoi.graph.vertex_to_edges[perimiter_point.coords[0]]
         assert len(voronoi_edge_index) == 1
-        voronoi_edge = voronoi.edges[voronoi_edge_index[0]]
+        voronoi_edge = voronoi.graph.edges[voronoi_edge_index[0]]
         cut_edge_section = already_cut.intersection(voronoi_edge)
         if cut_edge_section.length > starting_radius * 2:
             new_start_point = cut_edge_section.interpolate(0.5, normalized=True)
@@ -1422,7 +1439,7 @@ class EntryCircle(BaseGeometry):
         while loop * self.step <= self.radius and not_done:
             orientation = round(loop * 4) % 4
             if orientation == 0:
-                start_angle = 0
+                start_angle: float = 0
                 offset[1] -= self.step / 4
                 section_radius = loop * self.step
             elif orientation == 1:
@@ -1438,31 +1455,34 @@ class EntryCircle(BaseGeometry):
                 offset[0] += self.step / 4
                 section_radius = loop * self.step
             else:
-                raise
+                raise RuntimeError(f"Unexpected orientation: {orientation}")
 
             section_center = Point(self.center.x + offset[0], self.center.y + offset[1])
             new_arc = create_arc(
                     section_center, section_radius, start_angle, math.pi / 2, ArcDir.CW)
+            assert new_arc is not None
 
             if new_arc.path.intersects(mask.exterior):
                 # Spiral has crossed bounding circle.
                 masked_arc = new_arc.path.intersection(mask)
-                if masked_arc.type == "MultiLineString":
+                if masked_arc.geom_type == "MultiLineString":
                     longest = None
                     for arc in list(masked_arc.geoms):
                         if not longest or arc.length > longest.length:
                             longest = arc
                     masked_arc = longest
-                if masked_arc.type == "GeometryCollection":
+                if masked_arc.geom_type == "GeometryCollection":
                     longest = None
                     for arc in list(masked_arc.geoms):
                         if not longest or arc.length > longest.length:
                             longest = arc
                     masked_arc = longest
 
+                assert new_arc.radius is not None
                 new_arc = create_arc_from_path(
                         new_arc.origin, masked_arc, new_arc.radius, ArcDir.CW)
                 new_arc = complete_arc(new_arc, new_arc.winding_dir)
+                assert new_arc is not None
 
                 not_done = False
 
@@ -1474,8 +1494,8 @@ class EntryCircle(BaseGeometry):
 
         #self._queue_arcs(new_arcs)
 
-        sorted_arcs = self._split_arcs(new_arcs)
-        sorted_arcs = [complete_arc(sorted_arc) for sorted_arc in sorted_arcs]
+        sorted_arcs = self._split_arcs([a for a in new_arcs if a is not None])
+        sorted_arcs = [a for a in [complete_arc(s) for s in sorted_arcs] if a is not None]
         self._queue_arcs(sorted_arcs)
 
         self._flush_arc_queues()
@@ -1487,8 +1507,8 @@ class EntryCircle(BaseGeometry):
             angle = math.pi * 1.99999
 
         new_arc = create_arc(self.center, self.radius, 0, angle, self.winding_dir)
+        assert new_arc is not None
         sorted_arcs = self._split_arcs([new_arc])
-        sorted_arcs = [complete_arc(sorted_arc) for sorted_arc in sorted_arcs]
+        sorted_arcs = [a for a in [complete_arc(s) for s in sorted_arcs] if a is not None]
         self._queue_arcs(sorted_arcs)
         self._flush_arc_queues()
-
