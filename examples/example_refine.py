@@ -42,7 +42,7 @@ def display_outline(shapes, colour="blue"):
 
 def display_voronoi(toolpath, colour="red"):
     """ Display the voronoi edges. These are equidistant from the shape's edges. """
-    for edge in toolpath.voronoi.edges.values():
+    for edge in toolpath.voronoi.graph.edges.values():
         x = []
         y = []
         for point in edge.coords:
@@ -58,7 +58,7 @@ def display_visited_voronoi_edges(toolpath, colour="black"):
     This should match the output of display_voronoi(...).
     """
     for edge in toolpath.visited_edges:
-        edge_coords = toolpath.voronoi.edges[edge].coords
+        edge_coords = toolpath.voronoi.graph.edges[edge].coords
         x = []
         y = []
         for point in edge_coords:
@@ -72,14 +72,14 @@ def display_toolpath(
         toolpath, cut_colour="green", rapid_inside_colour="blue", rapid_outside_colour="orange"):
     # Display path.
     for element in toolpath.path:
-        if type(element).__name__ == "Arc":
+        if isinstance(element, geometry.ArcData):
             x, y = element.path.xy
             if element.debug:
                 plt.plot(x, y, c=element.debug, linewidth=3)
             else:
                 plt.plot(x, y, c=cut_colour, linewidth=1)
 
-        elif type(element).__name__ == "Line":
+        elif isinstance(element, geometry.LineData):
             x, y = element.path.xy
             if element.move_style == geometry.MoveStyle.RAPID_INSIDE:
                 plt.plot(x, y, linestyle='--', c=rapid_inside_colour, linewidth=1)

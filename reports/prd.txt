@@ -16,7 +16,7 @@ Refactor `geometry.py` by splitting it into focused modules aligned with three d
 6. As a library developer, I want dead code removed, so that I do not have to mentally account for unused methods when reading the codebase.
 7. As a library developer, I want the `generate=False` testing workaround removed, so that the production code path and the test code path are identical.
 8. As a library consumer, I want the public `Pocket` API to remain unchanged, so that I do not need to update my calling code after the refactor.
-9. As a library consumer, I want `Pocket.get_arcs()` to yield batches of new arcs alongside a progress ratio, so that my application can update its UI without blocking.
+9. As a library consumer, I want `Pocket.get_arcs()` to yield a progress ratio periodically, so that my application can update its UI without blocking while reading `Pocket.path` directly for the accumulated arcs.
 10. As a library developer, I want `EntryCircle` to be a simple data container that produces a list of arcs, so that its behaviour can be verified by inspecting the arc list directly.
 11. As a library developer, I want the `dist_offset` overshoot trick encapsulated inside `_arc_at_distance`, so that `_calculate_arc`'s convergence loop does not need to know about it.
 12. As a library developer, I want the arc-fitting convergence core to be a pure function with no instance state, so that I can test it with arbitrary inputs without side effects.
@@ -36,14 +36,14 @@ Refactor `geometry.py` by splitting it into focused modules aligned with three d
 - **`geometry.py`** — `Pocket` facade only. Constructs and orchestrates `PathPlanner`, `ArcFitter`, and `PathAssembler`. Exposes `.path`, `.start_point`, `.max_starting_radius`, `.starting_angle`. Runs the pipeline as a generator.
 - **`path_planner.py`** — `PathPlanner` class. Owns voronoi graph traversal state: `visited_edges`, `open_paths`, `path_len_progress`, `path_len_total`. Exposes `next_edge() -> LineString | None` and tracks progress ratio.
 - **`arc_fitter.py`** — `ArcFitter` class and `ProportionalController` class. `ArcFitter` owns `calculated_area_total` and `last_circle`. Exposes `fit_arc(voronoi_edge, start_distance, min_distance) -> (new_distance, List[ArcData])`. `ProportionalController` replaces the `_converge` coroutine with a `step(target, current) -> float` method.
-- **`path_assembler.py`** — `PathAssembler` class (absorbs `BaseGeometry`) and `EntryCircle` class. `PathAssembler` owns `path`, `last_arc`, `cut_area_total`, `pending_arc_queues`. `EntryCircle` is a data container exposing `arcs() -> List[ArcData]`.
+- **`path_assembler.py`** — `PathAssembler` class (absorbs `BaseGeometry`) and `EntryCircle` class. `PathAssembler` owns `path`, `last_arc`, `cut_area_total`, `pending_arc_queues`, and resolves `ArcDir.CLOSEST` to `CW`/`CCW` at assembly time. `EntryCircle` is a data container exposing `arcs() -> List[ArcData]`.
 - **`arc_utils.py`** — Free functions: `create_arc`, `create_circle`, `create_arc_from_path`, `complete_arc`, `mirror_arc`, `split_arcs`, `filter_arc`, `arcs_from_circle_diff`.
 
 ### Pipeline
 
 1. `EntryCircle.arcs()` produces arc list → passed directly to `PathAssembler` (bypasses planning and fitting since entry circle geometry is known upfront).
 2. Facade loop: `PathPlanner.next_edge()` → `ArcFitter.fit_arc()` → `PathAssembler` queue.
-3. `Pocket.get_arcs()` yields `(new_arcs, progress_ratio)` after each timeslice, where `new_arcs` is the slice of `PathAssembler.path` since the last yield and `progress_ratio` comes from `PathPlanner`.
+3. `Pocket.get_arcs()` yields a `float` progress ratio after each timeslice (unchanged from current API). Caller reads `Pocket.path` directly to access accumulated arcs. `Pocket.path` is a property delegating to `PathAssembler.path`.
 
 ### Key interface changes
 
@@ -52,13 +52,37 @@ Refactor `geometry.py` by splitting it into focused modules aligned with three d
 - `_calculate_arc` convergence core extracted to a pure function taking `(voronoi_edge, start_distance, min_distance, step, calculated_area, last_circle, controller)` and returning `(best_distance, circle)`.
 - `split_arcs(arcs, calculated_area) -> List[ArcData]` and `filter_arc(arc, polygon, dilated_boundaries, step) -> Optional[ArcData]` become free functions.
 - `generate` parameter removed from `Pocket.__init__`; always a generator.
-- `get_arcs()` yields `(List[Union[ArcData, LineData]], float)` — new arcs since last yield and a progress ratio.
+- `get_arcs()` yield protocol unchanged: yields a single `float` progress ratio. Callers read `Pocket.path` directly for arcs.
+- `Pocket.path` becomes a property delegating to `PathAssembler.path`.
+- `Pocket.voronoi` exposed as a read-only property delegating to `PathPlanner.voronoi` (used in examples for visualisation).
 
 ### Deletions
 
-- `_start_point_perimeter` — dead code, deleted.
+- `_start_point_perimeter` on `Pocket` — dead code, deleted.
+- `start_point_widest` and `start_point_perimeter` module-level functions in `voronoi_centers.py` — deleted; callers use `VoronoiCenters.for_widest_start` and `VoronoiCenters.for_perimeter_start` directly.
 - `BaseGeometry` — absorbed into `PathAssembler`, name retired.
-- `generate=False` mode — removed.
+- `generate=False` mode — removed; examples updated to drop `generate=True` from `Pocket(...)` calls.
+- `Pocket.visited_edges` — not exposed on the facade; examples that used it for visualisation updated to remove that display.
+
+### State ownership summary
+
+- `calculated_area_total` (arcs planned) — owned exclusively by `ArcFitter`. `PathAssembler` never reads it.
+- `cut_area_total` (arcs committed to path) — owned exclusively by `PathAssembler`. `ArcFitter` never reads it.
+- These are independent tracking polygons and no sharing between classes is needed.
+
+### Queue mechanism
+
+`PathAssembler._queue_arcs` handles the case where a single arc is split into multiple pieces by already-cut geometry and sorts sub-arcs into separate queues to preserve correct joining order. This logic is preserved as-is from `BaseGeometry` — it is correct and sufficient for now.
+
+### Migration order
+
+Refactor incrementally, keeping tests green after each step:
+1. Extract free functions to `arc_utils.py`
+2. Extract `ProportionalController` and the pure convergence function to `arc_fitter.py`
+3. Extract `PathAssembler` from `BaseGeometry`
+4. Extract `PathPlanner`
+5. Slim `Pocket` to the facade
+6. Simplify `EntryCircle`
 
 ### Deferred
 
@@ -83,7 +107,7 @@ Refactor `geometry.py` by splitting it into focused modules aligned with three d
 
 ## Out of Scope
 
-- Changes to `voronoi_centers.py` — user is satisfied with its current state.
+- Functional changes to `voronoi_centers.py` — only the two redundant wrapper functions are deleted; everything else is untouched.
 - Changes to `dxf.py`, `helpers.py`, or `debug.py`.
 - Resolving the `_furthest_spacing_arcs` vs `_furthest_spacing_shapely` question — deferred to a follow-up once tests exist.
 - Changes to the public `Pocket` constructor signature or the `ArcData`/`LineData` NamedTuples.
