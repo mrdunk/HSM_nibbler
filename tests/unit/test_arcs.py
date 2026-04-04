@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from shapely.geometry import LineString, Point, Polygon
 
 import hsm_nibble.geometry as geometry
+import hsm_nibble.arc_utils as arc_utils
 
 
 ACCURACY = 0.05
@@ -59,7 +60,7 @@ class TestCircle(unittest.TestCase):
         origin = Point(10, 10)
         radius = 7
 
-        circle = geometry.create_circle(origin = origin, radius = radius)
+        circle = arc_utils.create_circle(origin = origin, radius = radius)
 
         self.assertEqual(circle.origin, origin)
         self.assertEqual(circle.radius, radius)
@@ -84,7 +85,7 @@ class TestCreateArc(BaseTests):
         span_angle = geometry.math.pi / 2
         winding_dir = geometry.ArcDir.CW
 
-        arc = geometry.create_arc(origin, radius, start_angle, span_angle, winding_dir)
+        arc = arc_utils.create_arc(origin, radius, start_angle, span_angle, winding_dir)
 
         self.verify_arc(arc)
 
@@ -96,7 +97,7 @@ class TestCreateArc(BaseTests):
         span_angle = -geometry.math.pi / 4
         winding_dir = geometry.ArcDir.CCW
 
-        arc = geometry.create_arc(origin, radius, start_angle, span_angle, winding_dir)
+        arc = arc_utils.create_arc(origin, radius, start_angle, span_angle, winding_dir)
 
         self.verify_arc(arc)
 
@@ -108,7 +109,7 @@ class TestCreateArc(BaseTests):
         span_angle = math.pi * 2
         winding_dir = geometry.ArcDir.CW
 
-        arc = geometry.create_arc(origin, radius, start_angle, span_angle, winding_dir)
+        arc = arc_utils.create_arc(origin, radius, start_angle, span_angle, winding_dir)
 
         self.verify_arc(arc)
 
@@ -120,7 +121,7 @@ class TestCreateArc(BaseTests):
         span_angle = -math.pi * 2
         winding_dir = geometry.ArcDir.CCW
 
-        arc = geometry.create_arc(origin, radius, start_angle, span_angle, winding_dir)
+        arc = arc_utils.create_arc(origin, radius, start_angle, span_angle, winding_dir)
 
         self.verify_arc(arc)
 
@@ -133,13 +134,13 @@ class TestArc(BaseTests):
         winding_dir = geometry.ArcDir.CW
 
         # This path will start at the coordinates: (radius, 0)
-        path = list(geometry.create_circle(origin, radius).path.coords)
+        path = list(arc_utils.create_circle(origin, radius).path.coords)
 
         path = path[int(len(path) / 8) : int(7 * len(path) / 8)]
 
-        arc = geometry.create_arc_from_path(origin, LineString(path), radius)
+        arc = arc_utils.create_arc_from_path(origin, LineString(path), radius)
         self.verify_arc_points(arc)
-        arc = geometry.complete_arc(arc, winding_dir)
+        arc = arc_utils.complete_arc(arc, winding_dir)
 
         self.assertEqual(arc.origin, origin)
         self.assertEqual(arc.radius, radius)
@@ -162,13 +163,13 @@ class TestArc(BaseTests):
         winding_dir = geometry.ArcDir.CCW
 
         # This path will start at the coordinates: (radius, 0)
-        path = list(geometry.create_circle(origin, radius).path.coords)
+        path = list(arc_utils.create_circle(origin, radius).path.coords)
 
         path = path[int(len(path) / 8) : int(7 * len(path) / 8)]
 
-        arc = geometry.create_arc_from_path(origin, LineString(path), radius)
+        arc = arc_utils.create_arc_from_path(origin, LineString(path), radius)
         self.verify_arc_points(arc)
-        arc = geometry.complete_arc(arc, winding_dir)
+        arc = arc_utils.complete_arc(arc, winding_dir)
 
         self.assertEqual(arc.origin, origin)
         self.assertEqual(arc.radius, radius)
@@ -195,10 +196,10 @@ class TestMirrorArc(BaseTests):
 
         for start_angle_multiplier in range(8):
             start_angle = start_angle_multiplier * math.pi * 2 / 8
-            arc = geometry.create_arc(origin, radius, start_angle, span_angle, winding_dir)
+            arc = arc_utils.create_arc(origin, radius, start_angle, span_angle, winding_dir)
             self.verify_arc(arc)
 
-            mirrored_arc = geometry.mirror_arc(mirror_axis, arc)
+            mirrored_arc = arc_utils.mirror_arc(mirror_axis, arc)
             self.verify_arc(mirrored_arc)
             self.assertEqual(mirrored_arc.winding_dir, geometry.ArcDir.CCW)
 
@@ -212,10 +213,10 @@ class TestMirrorArc(BaseTests):
 
         for start_angle_multiplier in range(8):
             start_angle = start_angle_multiplier * math.pi * 2 / 8
-            arc = geometry.create_arc(origin, radius, start_angle, span_angle, winding_dir)
+            arc = arc_utils.create_arc(origin, radius, start_angle, span_angle, winding_dir)
             self.verify_arc(arc)
 
-            mirrored_arc = geometry.mirror_arc(mirror_axis, arc)
+            mirrored_arc = arc_utils.mirror_arc(mirror_axis, arc)
             self.verify_arc(mirrored_arc)
             self.assertEqual(mirrored_arc.winding_dir, geometry.ArcDir.CW)
 
@@ -228,10 +229,10 @@ class TestMirrorArc(BaseTests):
         mirror_axis = 123
         start_angle = math.pi * 2 / 8
 
-        arc = geometry.create_arc(origin, radius, start_angle, span_angle, winding_dir)
+        arc = arc_utils.create_arc(origin, radius, start_angle, span_angle, winding_dir)
         self.verify_arc(arc)
 
-        mirrored_arc = geometry.mirror_arc(mirror_axis, arc, geometry.ArcDir.CW)
+        mirrored_arc = arc_utils.mirror_arc(mirror_axis, arc, geometry.ArcDir.CW)
 
         self.assertIs(arc, mirrored_arc)
 
@@ -245,10 +246,10 @@ class TestMirrorArc(BaseTests):
 
         for start_angle_multiplier in range(8):
             start_angle = start_angle_multiplier * math.pi * 2 / 8
-            arc = geometry.create_arc(origin, radius, start_angle, span_angle, winding_dir)
+            arc = arc_utils.create_arc(origin, radius, start_angle, span_angle, winding_dir)
             self.verify_arc(arc)
 
-            mirrored_arc = geometry.mirror_arc(mirror_axis, arc, geometry.ArcDir.CCW)
+            mirrored_arc = arc_utils.mirror_arc(mirror_axis, arc, geometry.ArcDir.CCW)
             self.verify_arc(mirrored_arc)
 
 if __name__ == '__main__':
