@@ -22,7 +22,7 @@ from shapely.geometry import box, LineString, MultiLineString, MultiPolygon, Pol
 from shapely.ops import linemerge, unary_union  # type: ignore
 from tabulate import tabulate
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from hsm_nibble import dxf
 from hsm_nibble import geometry
 

@@ -16,7 +16,7 @@ import time
 import ezdxf
 from shapely.geometry import Polygon  # type: ignore
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from hsm_nibble import dxf
 from hsm_nibble import geometry
 
