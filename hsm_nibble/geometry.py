@@ -21,7 +21,7 @@
 
 # pylint: disable=attribute-defined-outside-init
 
-from typing import Dict, Generator, List, Optional, Set, Tuple, Union
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 import math
 import time
@@ -35,6 +35,10 @@ from hsm_nibble.arc_utils import (  # type: ignore
     arcs_from_circle_diff, complete_arc, create_arc, create_arc_from_path,
     create_circle, filter_arc, mirror_arc, split_arcs,
 )
+from hsm_nibble.arc_fitter import (  # type: ignore
+    ProportionalController, arc_at_distance, find_best_arc_distance,
+    ITERATION_COUNT, CORNER_ZOOM, CORNER_ZOOM_EFFECT,
+)
 from hsm_nibble.debug import Display
 from hsm_nibble.voronoi_centers import VoronoiCenters  # type: ignore
 from hsm_nibble.helpers import log  # type: ignore
@@ -47,26 +51,12 @@ SKIP_EDGE_ARCS = 1 / 20
 # Trivially short lines joining arcs should be filtered.
 SHORTEST_RAPID = 1e-6
 
-# Number of tries before we give up trying to find a best-fit arc and just go
-# with the best we have found so far.
-ITERATION_COUNT = 50
-
 # Whether to visit short voronoi edges first (True) or try to execute longer
 # branches first.
 # TODO: We could use more long range path planning that take the shortest total
 # path into account.
 #BREADTH_FIRST = True
 BREADTH_FIRST = False
-
-# When arc sizes drop below a certain point, we need to reduce the step size or
-# forward motion due to the distance between arcs (step) becomes more than the
-# arc diameter.
-# This constant is the minimum arc radius, expressed as a multiple of the overlap
-# size, size at which we start reducing step size.
-CORNER_ZOOM = 2.0
-# This constant is how much effect the feature will have. A value of "1" will
-# keep the distance between each arc center proportional to the arc size.
-CORNER_ZOOM_EFFECT = 1.0
 
 
 def clean_linear_ring(ring: LinearRing) -> LinearRing:
@@ -676,107 +666,8 @@ class Pocket(BaseGeometry):
         self.last_circle = None
         return closest_vertex
 
-    @classmethod
-    def _extrapolate_line(cls, extra: float, line: LineString) -> LineString:
-        """
-        Extend a line at both ends in the same direction it points.
-        """
-        coord_0, coord_1 = line.coords[:2]
-        coord_m2, coord_m1 = line.coords[-2:]
-        ratio_begin = extra / LineString([coord_0, coord_1]).length
-        ratio_end = extra / LineString([coord_m2, coord_m1]).length
-        coord_begin = Point(
-            coord_0[0] + (coord_0[0] - coord_1[0]) * ratio_begin,
-            coord_0[1] + (coord_0[1] - coord_1[1]) * ratio_begin)
-        coord_end = Point(
-            coord_m1[0] + (coord_m1[0] - coord_m2[0]) * ratio_end,
-            coord_m1[1] + (coord_m1[1] - coord_m2[1]) * ratio_end)
-        return LineString([coord_begin] + list(line.coords) + [coord_end])
-
-    @classmethod
-    def _converge(cls, kp: float) -> Generator[float, Tuple[float, float], None]:
-        """
-        Algorithm used for recursively estimating the position of the best fit arc.
-
-        Arguments:
-            kp: Proportional multiplier.
-        Yields:
-            Arguments:
-                target: Target step size.
-                current: step size resulting from the previous iteration result.
-            next distance.
-        Returns:
-            Never exits Yield loop.
-        """
-        error: float = 0.0
-        value: float = 0.0
-
-        while True:
-            target, current = yield value
-
-            error = target - current
-            prportional = kp * error
-            value = prportional
-
     def _arc_at_distance(self, distance: float, voronoi_edge: LineString) -> Tuple[Point, float]:
-        """
-        Calculate the center point and radius of the largest arc that fits at a
-        set distance along a voronoi edge.
-        """
-        pos = voronoi_edge.interpolate(distance)
-        radius = self.voronoi.distance_from_geom(pos)
-
-        return (pos, radius)
-
-    def _furthest_spacing_arcs(self, arcs: List[ArcData], last_circle: ArcData) -> float:
-        """
-        Calculate maximum step_over between 2 arcs.
-        """
-        #return self._furthest_spacing_shapely(arcs, last_circle.path)
-        spacing = -self.voronoi.max_dist
-
-        for arc in arcs:
-            spacing = max(spacing,
-                          last_circle.origin.hausdorff_distance(arc.path) - last_circle.radius)
-
-            #for index in range(0, len(arc.path.coords), 1):
-            #    coord = arc.path.coords[index]
-            #    spacing = max(spacing,
-            #            Point(coord).distance(last_circle.origin) - last_circle.radius)
-
-        return abs(spacing)
-
-    @classmethod
-    def _furthest_spacing_shapely(
-            cls, arcs: List[ArcData], previous: LineString) -> float:
-        """
-        Calculate maximum step_over between 2 arcs.
-
-        TODO: Current implementation is expensive. Not sure how shapely's distance
-        method works but it is likely "O(N)", making this implementation N^2.
-        We can likely reduce that to O(N*log(N)) with a binary search.
-
-        Arguments:
-            arcs: The new arcs.
-            previous: The previous cut path geometry we are testing the arks against.
-
-        Returns:
-            The step distance.
-        """
-        spacing = -1
-        polygon = previous
-        for arc in arcs:
-            if not arc.path:
-                continue
-
-            # This is expensive but yields good results.
-            # Probably want to do a binary search version?
-
-            for coord in arc.path.coords:
-                #spacing = max(spacing, Point(coord).distance(polygon))
-                spacing = max(spacing, polygon.distance(Point(coord)))
-
-        return spacing
+        return arc_at_distance(distance, voronoi_edge, self.voronoi.distance_from_geom)
 
     def _calculate_arc(
             self,
@@ -820,129 +711,50 @@ class Pocket(BaseGeometry):
                 about the arcs generated with an origin the specified distance
                 allong the voronoi edge.
         """
-        # A generator to converge on desired spacing.
-        #converge = self._converge(0.75)
-        converge = self._converge(0.76)
-        converge.send(None)  # type: ignore
-
-        color_overide = None
-
-        desired_step = min(self.step, (voronoi_edge.length - start_distance))
-
-        distance = start_distance + desired_step
-
-        count: int = 0
-        circle: Optional[ArcData] = None
-        arcs: List[ArcData] = []
-        progress: float = 0.0
-        best_progress: float = 0.0
-        best_distance: float = 0.0
-        dist_offset: int = 100000
-        corner_zoom = CORNER_ZOOM * self.step
-
-        # Extrapolate line beyond it's actual distance to give the algorithm
-        # room to overshoot while converging on an optimal position for the new arc.
-        edge_extended: LineString = self._extrapolate_line(
-            dist_offset, voronoi_edge)
-        assert abs(edge_extended.length -
-                   (voronoi_edge.length + 2 * dist_offset)) < 0.0001
-
         assert self.calculated_area_total
         assert self.calculated_area_total.is_valid
 
-        # Loop multiple times, trying to converge on a distance along the voronoi
-        # edge that provides the correct step size.
-        while count <= ITERATION_COUNT:
-            count += 1
+        controller = ProportionalController()
+        best_distance, best_circle, hidden_at_start, iteration_count, backwards = \
+            find_best_arc_distance(
+                voronoi_edge=voronoi_edge,
+                start_distance=start_distance,
+                min_distance=min_distance,
+                step=self.step,
+                winding_dir=self.winding_dir,
+                calculated_area=self.calculated_area_total,
+                last_circle=self.last_circle,
+                distance_from_geom=self.voronoi.distance_from_geom,
+                max_dist=self.voronoi.max_dist,
+                controller=controller,
+            )
 
-            # Propose an arc.
-            pos, radius = self._arc_at_distance(
-                distance + dist_offset, edge_extended)
-            circle = create_circle(pos, radius, self.winding_dir)
+        if hidden_at_start:
+            self.last_circle = best_circle
+            return (best_distance, [])
 
-            # Compare proposed arc to cut area.
-            # We are only interested in sections that have not been cut yet.
-            arcs = self._split_arcs([circle])
-            if not arcs:
-                # arc is entirely hidden by previous cut geometry.
+        if backwards:
+            return (voronoi_edge.length, [])
 
-                if best_progress > 0:
-                    # Has made some progress.
-                    count = ITERATION_COUNT
-                    color_overide = "orange"
-                    break
-
-                # Has not found any useful arc yet.
-                # Don't record it as an arc that needs drawn.
-                self.last_circle = circle
-                return(distance, [])
-
-            # Progress is measured as the furthest point the proposed arc is
-            # from the previous one. We are aiming for proposed == desired_step.
-            if self.last_circle:
-                progress = self._furthest_spacing_arcs(arcs, self.last_circle)
-            else:
-                progress = self._furthest_spacing_shapely(arcs, self.calculated_area_total)
-
-            desired_step = min(self.step, (voronoi_edge.length - start_distance))
-            if radius < corner_zoom:
-                # Limit step size as the arc radius gets very small.
-                multiplier = (corner_zoom - radius) / corner_zoom
-                desired_step = self.step * (1 - CORNER_ZOOM_EFFECT * multiplier)
-
-            if abs(desired_step - progress) < abs(desired_step - best_progress):
-                # Better fit.
-                best_progress = progress
-                best_distance = distance
-
-                if abs(desired_step - progress) < desired_step / 20:
-                    # Good enough fit.
-                    best_progress = progress
-                    best_distance = distance
-                    break
-
-            modifier = converge.send((desired_step, progress))
-            distance += modifier
-
-        if count == ITERATION_COUNT:
-            color_overide = "red"
-            if distance < min_distance:
-                # Moving the wrong way along the voronoi edge.
-                # Only happens when we've been to the end of an edge already.
-                return (voronoi_edge.length, [])
-
-        if best_distance > voronoi_edge.length:
-            best_distance = voronoi_edge.length
-
-        if distance != best_distance or progress != best_progress or color_overide is not None:
-            distance = best_distance
-            progress = best_progress
-            pos, radius = self._arc_at_distance(
-                distance + dist_offset, edge_extended)
-            circle = create_circle(Point(pos), radius, self.winding_dir)
-            arcs = self._split_arcs([circle])
-
-        if count == ITERATION_COUNT and self.debug:
-            # Log some debug data.
-            distance_remain = voronoi_edge.length - distance
+        if iteration_count == ITERATION_COUNT and self.debug:
+            distance_remain = voronoi_edge.length - best_distance
             self.arc_fail_count += 1
-            log("\tDid not find an arc that fits. Spacing/Desired: "
-                f"{round(progress, 3)}/{desired_step}"
+            log("\tDid not find an arc that fits. "
                 "\tdistance remaining: "
                 f"{round(distance_remain, 3)}")
 
-        self.loop_count += count
+        self.loop_count += iteration_count
 
-        assert circle is not None
-        self.last_circle = circle
-        self.calculated_area_total = self.calculated_area_total.union(Polygon(circle.path))
+        assert best_circle is not None
+        self.last_circle = best_circle
 
-        filtered_arcs = []
-        for arc in arcs:
-            if self._filter_arc(arc):
-                filtered_arcs.append(arc)
+        arcs = self._split_arcs([best_circle])
+        self.calculated_area_total = self.calculated_area_total.union(
+            Polygon(best_circle.path))
 
-        return (distance, filtered_arcs)
+        filtered_arcs = [arc for arc in arcs if self._filter_arc(arc)]
+
+        return (best_distance, filtered_arcs)
 
     def _join_voronoi_branches(self, start_vertex: Tuple[float, float]) -> LineString:
         """
