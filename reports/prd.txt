@@ -1,0 +1,98 @@
+## Problem Statement
+
+`geometry.py` has grown into a god-class file of ~1500 lines. The `Pocket` class mixes three distinct concerns — voronoi graph traversal, arc fitting, and path assembly — making it difficult to reason about, maintain, and test. The worst pain point is `Pocket._calculate_arc`, a ~165-line method that simultaneously runs a convergence loop, mutates multiple pieces of instance state, performs arc splitting and filtering, and emits debug logging. No part of its core logic can be tested without constructing a full `Pocket` instance. The `BaseGeometry` base class compounds the problem by bundling path assembly machinery with a vague name that obscures its role. Dead code, undecided algorithms, and a testing workaround (`generate=False`) have accumulated over time.
+
+## Solution
+
+Refactor `geometry.py` by splitting it into focused modules aligned with three distinct responsibilities: path planning (voronoi traversal), arc fitting (geometric calculation), and path assembly (toolpath construction). The `Pocket` class becomes a thin public facade preserving the existing API. Each new module is independently testable. Dead code is removed. The convergence algorithm is replaced with a clean callable. The generator protocol is simplified and made the only mode of operation.
+
+## User Stories
+
+1. As a library developer, I want the arc-fitting logic isolated in its own module, so that I can write unit tests for it without constructing a full Pocket instance.
+2. As a library developer, I want the voronoi traversal logic isolated in its own module, so that I can test path ordering independently of arc geometry.
+3. As a library developer, I want the path assembly logic isolated in its own module, so that I can verify arc joining and rapid move generation in isolation.
+4. As a library developer, I want the convergence controller to be a plain callable class, so that I can test its step-response behaviour directly.
+5. As a library developer, I want `split_arcs` and `filter_arc` to be free functions with explicit inputs, so that I can test them without any class setup.
+6. As a library developer, I want dead code removed, so that I do not have to mentally account for unused methods when reading the codebase.
+7. As a library developer, I want the `generate=False` testing workaround removed, so that the production code path and the test code path are identical.
+8. As a library consumer, I want the public `Pocket` API to remain unchanged, so that I do not need to update my calling code after the refactor.
+9. As a library consumer, I want `Pocket.get_arcs()` to yield batches of new arcs alongside a progress ratio, so that my application can update its UI without blocking.
+10. As a library developer, I want `EntryCircle` to be a simple data container that produces a list of arcs, so that its behaviour can be verified by inspecting the arc list directly.
+11. As a library developer, I want the `dist_offset` overshoot trick encapsulated inside `_arc_at_distance`, so that `_calculate_arc`'s convergence loop does not need to know about it.
+12. As a library developer, I want the arc-fitting convergence core to be a pure function with no instance state, so that I can test it with arbitrary inputs without side effects.
+13. As a library developer, I want `BaseGeometry` renamed and its responsibility made explicit, so that new contributors understand what it does without reading its implementation.
+14. As a library developer, I want the spacing measurement approach (`_furthest_spacing_arcs` vs `_furthest_spacing_shapely`) to be revisited with isolated tests, so that the correct and most performant approach can be determined empirically.
+15. As a library developer, I want `_start_point_perimeter` (dead code) deleted, so that the codebase accurately reflects what the library actually does.
+16. As a library consumer, I want `Pocket` to optionally accept an `EntryCircle`, so that entry spiral/circle arcs are assembled into the path before pocket arcs without changing the public interface.
+17. As a library developer, I want `PathPlanner` to expose a `next_edge()` iterator, so that the facade loop is simple and `PathPlanner` does not need to know about arc fitting or assembly.
+18. As a library developer, I want `ArcFitter` to expose a `fit_arc(edge, start_distance)` method returning `(new_distance, List[ArcData])`, so that it has a stable, minimal interface.
+19. As a library developer, I want `PathAssembler` to be the single place responsible for building the path list, so that arc joining, rapid move classification, and queue management are not spread across classes.
+20. As a library developer, I want each new module to have its own test file, so that test failures point directly to the responsible component.
+
+## Implementation Decisions
+
+### Module split
+
+- **`geometry.py`** — `Pocket` facade only. Constructs and orchestrates `PathPlanner`, `ArcFitter`, and `PathAssembler`. Exposes `.path`, `.start_point`, `.max_starting_radius`, `.starting_angle`. Runs the pipeline as a generator.
+- **`path_planner.py`** — `PathPlanner` class. Owns voronoi graph traversal state: `visited_edges`, `open_paths`, `path_len_progress`, `path_len_total`. Exposes `next_edge() -> LineString | None` and tracks progress ratio.
+- **`arc_fitter.py`** — `ArcFitter` class and `ProportionalController` class. `ArcFitter` owns `calculated_area_total` and `last_circle`. Exposes `fit_arc(voronoi_edge, start_distance, min_distance) -> (new_distance, List[ArcData])`. `ProportionalController` replaces the `_converge` coroutine with a `step(target, current) -> float` method.
+- **`path_assembler.py`** — `PathAssembler` class (absorbs `BaseGeometry`) and `EntryCircle` class. `PathAssembler` owns `path`, `last_arc`, `cut_area_total`, `pending_arc_queues`. `EntryCircle` is a data container exposing `arcs() -> List[ArcData]`.
+- **`arc_utils.py`** — Free functions: `create_arc`, `create_circle`, `create_arc_from_path`, `complete_arc`, `mirror_arc`, `split_arcs`, `filter_arc`, `arcs_from_circle_diff`.
+
+### Pipeline
+
+1. `EntryCircle.arcs()` produces arc list → passed directly to `PathAssembler` (bypasses planning and fitting since entry circle geometry is known upfront).
+2. Facade loop: `PathPlanner.next_edge()` → `ArcFitter.fit_arc()` → `PathAssembler` queue.
+3. `Pocket.get_arcs()` yields `(new_arcs, progress_ratio)` after each timeslice, where `new_arcs` is the slice of `PathAssembler.path` since the last yield and `progress_ratio` comes from `PathPlanner`.
+
+### Key interface changes
+
+- `_converge` generator coroutine → `ProportionalController` class with `step(target, current) -> float`.
+- `_arc_at_distance` gains an `overshoot` parameter (default `100000`) and handles edge extrapolation internally; callers no longer manage `dist_offset` or `edge_extended`.
+- `_calculate_arc` convergence core extracted to a pure function taking `(voronoi_edge, start_distance, min_distance, step, calculated_area, last_circle, controller)` and returning `(best_distance, circle)`.
+- `split_arcs(arcs, calculated_area) -> List[ArcData]` and `filter_arc(arc, polygon, dilated_boundaries, step) -> Optional[ArcData]` become free functions.
+- `generate` parameter removed from `Pocket.__init__`; always a generator.
+- `get_arcs()` yields `(List[Union[ArcData, LineData]], float)` — new arcs since last yield and a progress ratio.
+
+### Deletions
+
+- `_start_point_perimeter` — dead code, deleted.
+- `BaseGeometry` — absorbed into `PathAssembler`, name retired.
+- `generate=False` mode — removed.
+
+### Deferred
+
+- `_furthest_spacing_arcs` vs `_furthest_spacing_shapely`: both implementations are kept temporarily. Once isolated tests exist for `ArcFitter`, the correct approach will be determined empirically and the other deleted.
+
+## Testing Decisions
+
+**What makes a good test:** Tests should verify observable external behaviour — inputs, outputs, and side effects on explicitly exposed state. They should not assert on internal variable names, intermediate values, or implementation details that may change during further refactoring. Prefer constructing minimal inputs (small polygons, short voronoi edges) over full fixture `.dxf` files for unit tests.
+
+**Modules to test:**
+
+- `ProportionalController` — unit tests: verify `step()` returns a correction proportional to the error, converges toward target over multiple calls.
+- `split_arcs` (free function) — unit tests: arc entirely inside cut area returns empty list; arc partially inside returns trimmed arc(s); arc entirely outside returns unchanged.
+- `filter_arc` (free function) — unit tests: arc too short is filtered; arc entirely within edge buffer is filtered; valid arc passes through.
+- `ArcFitter.fit_arc` — unit tests using a small square polygon and short voronoi edge: returned distance advances along edge; returned arcs have radius consistent with pocket geometry; `last_circle` state updates correctly.
+- `PathAssembler` — unit tests: arc joining produces correct `MoveStyle` (CUT vs RAPID_INSIDE vs RAPID_OUTSIDE); queue ordering is preserved; `path` grows correctly with each arc batch.
+- `PathPlanner` — unit tests: `next_edge()` returns each voronoi edge once; progress ratio increases monotonically; returns `None` when all edges visited.
+- `EntryCircle` — unit tests: `arcs()` returns a non-empty list; all arcs have consistent radius; spiral terminates before exceeding bounding circle.
+- `Pocket` (integration) — existing `test_arcs.py` and `test_coverage.py` patterns apply; verify `.path` is non-empty after exhausting the generator; verify `start_point` and `max_starting_radius` are set.
+
+**Prior art:** `tests/test_arcs.py` tests free functions (`create_arc`, `complete_arc`, `mirror_arc`) using `unittest` with a `BaseTests` helper that validates arc geometry invariants. `tests/test_voronoi.py` constructs minimal `VoronoiGraph` objects via a helper rather than running full voronoi computation. New tests should follow the same pattern: minimal setup, direct assertion on outputs.
+
+## Out of Scope
+
+- Changes to `voronoi_centers.py` — user is satisfied with its current state.
+- Changes to `dxf.py`, `helpers.py`, or `debug.py`.
+- Resolving the `_furthest_spacing_arcs` vs `_furthest_spacing_shapely` question — deferred to a follow-up once tests exist.
+- Changes to the public `Pocket` constructor signature or the `ArcData`/`LineData` NamedTuples.
+- Performance optimisation beyond what the refactor naturally enables.
+- Any changes to `.dxf` test cases or example scripts.
+
+## Further Notes
+
+- The `BREADTH_FIRST` constant is currently toggled by commenting/uncommenting a line. This is a code smell but fixing it is out of scope.
+- `DEBUG_DISPLAY` is a module-level singleton. Its placement in the new module structure should be considered but is not blocking.
+- The `CORNER_ZOOM` / `CORNER_ZOOM_EFFECT` tuning constants belong logically with `ArcFitter` since they govern arc fitting behaviour.
+- The spacing measurement research (`_furthest_spacing_*`) will be easier to conduct once `ArcFitter` has isolated unit tests — that is the primary motivation for deferring it rather than resolving it now.
