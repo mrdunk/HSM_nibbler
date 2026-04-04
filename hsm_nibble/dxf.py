@@ -83,25 +83,27 @@ def dxf_to_polygon(modelspace) -> MultiPolygon:
 
     parents: List[LineString] = []
     for ring in rings:
-        coveres = []
+        ring_poly = Polygon(ring)
+        covers = []
         covered_by = False
         for parent_index, parent in enumerate(parents):
-            if Polygon(ring).covers(parent):
-                coveres.append(parent_index)
+            if ring_poly.covers(parent):
+                covers.append(parent_index)
             if Polygon(parent).covers(ring):
                 covered_by = True
-        for not_parent in sorted(coveres, reverse=True):
+        for not_parent in sorted(covers, reverse=True):
             parents.pop(not_parent)
         if not covered_by:
             parents.append(ring)
 
     polygons = []
     for parent in parents:
+        parent_poly = Polygon(parent)
         holes = []
         for ring in rings:
             if ring is parent:
                 continue
-            if Polygon(parent).covers(ring):
+            if parent_poly.covers(ring):
                 holes.append(ring)
         polygon = Polygon(parent, holes=holes)
         if not polygon.is_valid:

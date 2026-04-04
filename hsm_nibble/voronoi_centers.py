@@ -37,7 +37,6 @@ Vertex = Tuple[float, float]
 ROUND_DP = 5
 
 # Resolution of voronoi algorithm.
-# See C++ Boost documentation.
 # Set it to 1 better than the geometry resolution.
 VORONOI_RES = 10**(ROUND_DP + 1)
 
@@ -137,9 +136,9 @@ class VoronoiGraph:
         Returns:
             The edge between vert_a and vert_b, or None if no such edge exists.
         """
-        edge = set(self.vertex_to_edges[vert_a]).intersection(set(self.vertex_to_edges[vert_b]))
-        if edge:
-            return edge.pop()
+        for e in self.vertex_to_edges[vert_a]:
+            if e in self.vertex_to_edges[vert_b]:
+                return e
         return None
 
 
@@ -616,10 +615,11 @@ class VoronoiCenters:
         widest_dist = 0
         widest_point = None
         for vertex in self.graph.vertex_to_edges:
-            nearest_dist = Point(vertex).distance(self.polygon.boundary)
+            p = Point(vertex)
+            nearest_dist = p.distance(self.polygon.boundary)
             if nearest_dist > widest_dist:
                 widest_dist = nearest_dist
-                widest_point = Point(vertex)
+                widest_point = p
         assert widest_point is not None
         return (widest_point, widest_dist)
 
@@ -631,12 +631,13 @@ class VoronoiCenters:
         closest = None
         distance = self.max_dist
         for vertex in self.graph.vertex_to_edges:
-            if bounding_box.intersects(Point(vertex)):
-                return Point(vertex)
-            dist = bounding_box.distance(Point(vertex))
+            p = Point(vertex)
+            if bounding_box.intersects(p):
+                return p
+            dist = bounding_box.distance(p)
             if dist < distance:
                 distance = dist
-                closest = Point(vertex)
+                closest = p
         assert closest is not None
         return closest
 
@@ -687,9 +688,10 @@ class VoronoiCenters:
 
         # New vertex
         if new_edge is None or new_edge.length == 0:
-            assert point.equals(Point(new_vertex))
-            self.start_point = Point(new_vertex)
-            self.start_distance = self.distance_from_geom(Point(new_vertex))
+            new_vertex_point = Point(new_vertex)
+            assert point.equals(new_vertex_point)
+            self.start_point = new_vertex_point
+            self.start_distance = self.distance_from_geom(new_vertex_point)
             return
 
         # Add a new edge to the voronoi graph.

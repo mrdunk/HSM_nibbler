@@ -69,7 +69,6 @@ class Display:
         self.count += 1
         if self.count != 1:
             return
-        print(self.count)
 
         if polygons is None:
             polygons = {}

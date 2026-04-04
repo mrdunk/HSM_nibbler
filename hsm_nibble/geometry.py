@@ -626,11 +626,10 @@ class BaseGeometry:
                     assert last_arc.start is not None
                     assert last_arc.end is not None
 
-                    if (last_arc.end.distance(arc.start) <
-                            last_arc.end.distance(arc.end)):
+                    end_to_end = last_arc.end.distance(arc.end)
+                    if last_arc.end.distance(arc.start) < end_to_end:
                         winding_dir = ArcDir.CW
-                    if (last_arc.start.distance(arc.end) <
-                            last_arc.end.distance(arc.end)):
+                    if last_arc.start.distance(arc.end) < end_to_end:
                         winding_dir = ArcDir.CW
 
                 # TODO: Just reversing arc.path, arc.span_angle and arc.winding_dir
@@ -1065,8 +1064,7 @@ class Pocket(BaseGeometry):
             # This is expensive but yields good results.
             # Probably want to do a binary search version?
 
-            for index in range(0, len(arc.path.coords), 1):
-                coord = arc.path.coords[index]
+            for coord in arc.path.coords:
                 #spacing = max(spacing, Point(coord).distance(polygon))
                 spacing = max(spacing, polygon.distance(Point(coord)))
 

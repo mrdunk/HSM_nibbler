@@ -71,5 +71,10 @@ Some unit tests exist:
 ./tests/test_voronoi.py
 ```
 
+Discover unit tests:
+```
+python3 -m unittest discover tests/
+```
+
 ## Projects using this library
 - [DerpCAM](https://github.com/kfoltman/DerpCAM) A 2.5D CAM aimed at hobby CNC machine users.
