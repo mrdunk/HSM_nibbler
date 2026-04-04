@@ -21,38 +21,26 @@
 
 # pylint: disable=attribute-defined-outside-init
 
-from typing import Dict, List, Optional, Set, Tuple, Union
+from typing import List, Optional, Union
 
 import math
-import time
 
 from shapely.geometry import LinearRing, LineString, MultiLineString, MultiPolygon, Point, Polygon  # type: ignore
 
 from hsm_nibble.arc_utils import (  # type: ignore
     ArcData, ArcDir, LineData, MoveStyle, StartPointTactic,
-    arcs_from_circle_diff, complete_arc, create_arc, create_arc_from_path,
-    create_circle, filter_arc, mirror_arc, split_arcs,
+    complete_arc, create_arc, create_arc_from_path,
+    create_circle, mirror_arc, split_arcs,
 )
-from hsm_nibble.arc_fitter import (  # type: ignore
-    ProportionalController, arc_at_distance, find_best_arc_distance,
-    ITERATION_COUNT, CORNER_ZOOM, CORNER_ZOOM_EFFECT,
-)
-from hsm_nibble.path_assembler import PathAssembler, split_line_by_poly  # type: ignore
+from hsm_nibble.path_assembler import PathAssembler  # type: ignore
+from hsm_nibble.path_planner import PathPlanner  # type: ignore
 from hsm_nibble.debug import Display
 from hsm_nibble.voronoi_centers import VoronoiCenters  # type: ignore
-from hsm_nibble.helpers import log  # type: ignore
 DEBUG_DISPLAY = Display()
 
 
 # Filter arcs that are entirely within this distance of a pocket edge.
 SKIP_EDGE_ARCS = 1 / 20
-
-# Whether to visit short voronoi edges first (True) or try to execute longer
-# branches first.
-# TODO: We could use more long range path planning that take the shortest total
-# path into account.
-#BREADTH_FIRST = True
-BREADTH_FIRST = False
 
 
 def clean_linear_ring(ring: LinearRing) -> LinearRing:
@@ -87,24 +75,6 @@ def clean_multipolygon(multi: MultiPolygon) -> MultiPolygon:
         polygons.append(clean_polygon(polygon))
 
     return MultiPolygon(polygons)
-
-def _colapse_dupe_points(line: LineString) -> Optional[LineString]:
-    """
-    Filter out duplicate points.
-    TODO: Profile whether a .simplify(0) would be quicker?
-    """
-    points = []
-    last_point = None
-    for point in line.coords:
-        if last_point == point:
-            continue
-        points.append(point)
-        last_point = point
-    if len(points) < 2:
-        return None
-    return LineString(points)
-
-
 
 class BaseGeometry:
     # Area we have calculated arcs for. Calculated by appending full circles.
@@ -335,26 +305,14 @@ class Pocket(BaseGeometry):
         self.start_point: Point = self.voronoi.start_point
         self.start_radius: float = self.voronoi.start_distance or 0
 
-        self.arc_fail_count: int = 0
-        self.path_fail_count: int = 0
-        self.loop_count: int = 0
-
-        self.visited_edges: Set[int] = set()
-        self.open_paths: Dict[int, Tuple[float, float]] = {}
-
-        self.path_len_progress: float = 0.0
-        self.path_len_total: float = 0.0
-        for edge in self.voronoi.graph.edges.values():
-            self.path_len_total += edge.length
-
         # Used to detect when an arc is too close to the edge to be worthwhile.
-        self.dilated_polygon_boundaries = []
+        dilated_polygon_boundaries = []
         multi = self.polygon
         if multi.geom_type != "MultiPolygon":
             multi = MultiPolygon([multi])
         for poly in multi.geoms:
             for ring in [poly.exterior] + list(poly.interiors):
-                self.dilated_polygon_boundaries.append(
+                dilated_polygon_boundaries.append(
                         ring.buffer(self.step * SKIP_EDGE_ARCS))
 
         # Generate first circle from which other arcs expand.
@@ -380,10 +338,23 @@ class Pocket(BaseGeometry):
                 dy = self.path[0].start.y - self.start_point.y
                 self.starting_angle = math.atan2(dx, dy)
 
-        self.last_circle: Optional[ArcData] = create_circle(
-            self.start_point, self.start_radius)
+        # Create the planner that will drive the voronoi traversal.
+        self.path_planner = PathPlanner(
+            voronoi=self.voronoi,
+            step=self.step,
+            winding_dir=self.winding_dir,
+            assembler=self.assembler,
+            polygon=self.polygon,
+            dilated_polygon_boundaries=dilated_polygon_boundaries,
+            generate=self.generate,
+            debug=self.debug,
+        )
+
+        # Seed last_circle so the first arc is spaced correctly from centre.
+        last_circle = create_circle(self.start_point, self.start_radius)
+        self.path_planner.last_circle = last_circle
         self.calculated_area_total = self.calculated_area_total.union(
-                Polygon(self.last_circle.path))
+                Polygon(last_circle.path))
 
     def calculate_path(self) -> None:
         """ Reset path and restart from beginning. """
@@ -410,256 +381,30 @@ class Pocket(BaseGeometry):
                     path=self.path
                     )
 
-    def _choose_next_path(
-            self,
-            current_pos: Optional[Tuple[float, float]] = None
-    ) -> Optional[Tuple[float, float]]:
-        """
-        Choose a vertex with an un-traveled voronoi edge leading from it.
-
-        Returns:
-            A vertex that has un-traveled edges leading from it.
-        """
-        # Cleanup.
-        for edge_i in self.visited_edges:
-            if edge_i in self.open_paths:
-                self.open_paths.pop(edge_i)
-
-        shortest = self.voronoi.max_dist + 1
-        closest_vertex: Optional[Tuple[float, float]] = None
-        closest_edge: Optional[int] = None
-        for edge_i, vertex in self.open_paths.items():
-            if current_pos:
-                dist = Point(vertex).distance(Point(current_pos))
-            else:
-                dist = 0
-
-            if closest_vertex is None:
-                shortest = dist
-                closest_vertex = vertex
-                closest_edge = edge_i
-                if not current_pos:
-                    break
-            elif dist < shortest:
-                closest_vertex = vertex
-                closest_edge = edge_i
-                shortest = dist
-
-        if closest_edge is not None:
-            self.open_paths.pop(closest_edge)
-
-        self.last_circle = None
-        return closest_vertex
-
-    def _arc_at_distance(self, distance: float, voronoi_edge: LineString) -> Tuple[Point, float]:
-        return arc_at_distance(distance, voronoi_edge, self.voronoi.distance_from_geom)
-
-    def _calculate_arc(
-            self,
-            voronoi_edge: LineString,
-            start_distance: float,
-            min_distance: float,
-    ) -> Tuple[float, List[ArcData]]:
-        """
-        Calculate the arc that best fits within the path geometry.
-
-        A given point on the voronoi_edge is equidistant between the edges of the
-        desired cut path. We can calculate this distance and it forms the radius
-        of an arc touching the cut path edges.
-        We need the furthest point on that arc to be desired_step distance away from
-        the previous arc. It is hard to calculate a point on the voronoi_edge that
-        results in the correct spacing between the new and previous arc.
-
-        The constraints for the new arc are:
-        1) The arc must go through the point on the voronoi edge desired_step
-          distance from the previous arc's intersection with the voronoi edge.
-        2) The arc must be a tangent to the edge of the cut pocket.
-          Or put another way: The distance from the center of the arc to the edge
-          of the cut pocket should be the same as the distance from the center of
-          the arc to the point described in 1).
-
-        Rather than work out the new arc centre position with maths, it is quicker
-        and easier to use a binary search, moving the proposed centre repeatedly
-        and seeing if the arc fits.
-
-        Arguments:
-            voronoi_edge: The line of mid-way points between the edges of desired
-              cut path.
-            start_distance: The distance along voronoi_edge to start trying to
-              find an arc that fits.
-            min_distance: Do not return arcs below this distance; The algorithm
-              is confused and traveling backwards.
-        Returns:
-            A tuple containing:
-                1. Distance along voronoi edge of the final arc.
-                2. A collection of ArcData objects containing relevant information
-                about the arcs generated with an origin the specified distance
-                allong the voronoi edge.
-        """
-        assert self.calculated_area_total
-        assert self.calculated_area_total.is_valid
-
-        controller = ProportionalController()
-        best_distance, best_circle, hidden_at_start, iteration_count, backwards = \
-            find_best_arc_distance(
-                voronoi_edge=voronoi_edge,
-                start_distance=start_distance,
-                min_distance=min_distance,
-                step=self.step,
-                winding_dir=self.winding_dir,
-                calculated_area=self.calculated_area_total,
-                last_circle=self.last_circle,
-                distance_from_geom=self.voronoi.distance_from_geom,
-                max_dist=self.voronoi.max_dist,
-                controller=controller,
-            )
-
-        if hidden_at_start:
-            self.last_circle = best_circle
-            return (best_distance, [])
-
-        if backwards:
-            return (voronoi_edge.length, [])
-
-        if iteration_count == ITERATION_COUNT and self.debug:
-            distance_remain = voronoi_edge.length - best_distance
-            self.arc_fail_count += 1
-            log("\tDid not find an arc that fits. "
-                "\tdistance remaining: "
-                f"{round(distance_remain, 3)}")
-
-        self.loop_count += iteration_count
-
-        assert best_circle is not None
-        self.last_circle = best_circle
-
-        arcs = self._split_arcs([best_circle])
-        self.calculated_area_total = self.calculated_area_total.union(
-            Polygon(best_circle.path))
-
-        filtered_arcs = [arc for arc in arcs if self._filter_arc(arc)]
-
-        return (best_distance, filtered_arcs)
-
-    def _join_voronoi_branches(self, start_vertex: Tuple[float, float]) -> LineString:
-        """
-        Walk a section of the voronoi edge tree, creating a combined edge as we
-        go.
-
-        Returns:
-            A LineString object of the combined edges.
-        """
-        vertex = start_vertex
-
-        line_coords: List[Tuple[float, float]] = []
-
-        while True:
-            branches = self.voronoi.graph.vertex_to_edges[vertex]
-            candidate = None
-            longest = 0
-            for branch in branches:
-                if branch not in self.visited_edges:
-                    self.open_paths[branch] = vertex
-                    length = self.voronoi.graph.edges[branch].length
-                    if candidate is None:
-                        candidate = branch
-                    elif BREADTH_FIRST and length < longest:
-                        candidate = branch
-                    elif not BREADTH_FIRST and length > longest:
-                        candidate = branch
-
-                    longest = max(longest, length)
-
-            if candidate is None:
-                break
-
-            self.visited_edges.add(candidate)
-            edge_coords = self.voronoi.graph.edges[candidate].coords
-
-            if not line_coords:
-                line_coords = edge_coords
-                if start_vertex != line_coords[0]:
-                    line_coords = line_coords[::-1]
-            else:
-                if line_coords[-1] == edge_coords[-1]:
-                    edge_coords = edge_coords[::-1]
-                assert line_coords[0] == start_vertex
-                assert line_coords[-1] == edge_coords[0]
-                line_coords = list(line_coords) + list(edge_coords)
-
-            vertex = line_coords[-1]
-
-        line = LineString(line_coords)
-
-        return _colapse_dupe_points(line)
-
     def get_arcs(self, timeslice: int = 0):
         """
-        A generator method to create the path.
+        Generator that creates the toolpath. Delegates to PathPlanner.generate_path.
 
-        Class instance properties:
-            self.generate: bool: Whether or not to yield.
-                False: Do not yield. Generate all data in one shot.
-                True: Yield an estimated ratio of path completion.
-
-        Arguments:
-            timeslice: int: How long to generate arcs for before yielding (ms).
+        Yields an estimated ratio of path completion when generate=True.
         """
-        start_time = round(time.time() * 1000)  # ms
-
-        start_vertex: Optional[Tuple[float, float]
-                               ] = self.start_point.coords[0]
-        while start_vertex is not None:
-            # This outer loop iterates through the voronoi vertexes, looking for
-            # a voronoi edge that has not yet had arcs calculated for it.
-            combined_edge = self._join_voronoi_branches(start_vertex)
-            if not combined_edge:
-                start_vertex = self._choose_next_path()
-                continue
-
-            dist = 0.0
-            best_dist = dist
-            stuck_count = int(combined_edge.length * 10 / self.step + 10)
-            while abs(dist - combined_edge.length) > self.step / 20 and stuck_count > 0:
-                # This inner loop travels along a voronoi edge, trying to fit arcs
-                # that are the correct distance apart.
-                stuck_count -= 1
-                dist, new_arcs = self._calculate_arc(combined_edge, dist, best_dist)
-
-                self.path_len_progress -= best_dist
-                self.path_len_progress += dist
-
-                best_dist = dist
-                self._queue_arcs(new_arcs)
-
-                if timeslice >= 0 and self.generate:
-                    now = round(time.time() * 1000)  # (ms)
-                    if start_time + timeslice < now:
-                        yield min(0.999, self.path_len_progress / self.path_len_total)
-                        start_time = round(time.time() * 1000)  # (ms)
-
-            if stuck_count <= 0:
-                print(
-                    f"stuck: {round(dist, 2)} / {round(combined_edge.length, 2)}")
-                self.path_fail_count += 1
-
-            start_vertex = self._choose_next_path(combined_edge.coords[-1])
-
-            self._flush_arc_queues()
-
-        if timeslice and self.generate:
-            yield 1.0
-
-        assert not self.open_paths
-        log(f"loop_count: {self.loop_count}")
-        log(f"arc_fail_count: {self.arc_fail_count}")
-        log(f"len(path): {len(self.path)}")
-        log(f"path_fail_count: {self.path_fail_count}")
-
+        yield from self.path_planner.generate_path(timeslice)
         self.done_generating()
 
-    def _filter_arc(self, arc: ArcData) -> Optional[ArcData]:
-        return filter_arc(arc, self.polygon, self.dilated_polygon_boundaries, self.step)
+    @property
+    def arc_fail_count(self) -> int:
+        return self.path_planner.arc_fail_count
+
+    @property
+    def path_fail_count(self) -> int:
+        return self.path_planner.stuck_edge_count
+
+    @property
+    def visited_edges(self):
+        return self.path_planner.visited_edges
+
+    @property
+    def loop_count(self) -> int:
+        return self.path_planner.convergence_iterations
 
     def _start_point_perimeter(
             self, polygons: MultiPolygon, already_cut: Polygon, step: float) -> VoronoiCenters:
