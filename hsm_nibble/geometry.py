@@ -25,7 +25,7 @@ from typing import List, Optional, Union
 
 import math
 
-from shapely.geometry import LinearRing, LineString, MultiLineString, MultiPolygon, Point, Polygon  # type: ignore
+from shapely.geometry import MultiPolygon, Point, Polygon  # type: ignore
 
 from hsm_nibble.arc_utils import (  # type: ignore
     ArcData, ArcDir, LineData, MoveStyle, StartPointTactic,
@@ -42,39 +42,6 @@ DEBUG_DISPLAY = Display()
 # Filter arcs that are entirely within this distance of a pocket edge.
 SKIP_EDGE_ARCS = 1 / 20
 
-
-def clean_linear_ring(ring: LinearRing) -> LinearRing:
-    """ Remove duplicate points in a LinearRing. """
-    new_ring = []
-    prev_point = None
-    first_point = None
-    for point in ring.coords:
-        if first_point is None:
-            first_point = point
-        if point == prev_point:
-            continue
-        new_ring.append(point)
-        prev_point = point
-    assert prev_point == first_point  # This is a loop.
-
-    return LinearRing(new_ring)
-
-def clean_polygon(polygon: Polygon) -> Polygon:
-    exterior = clean_linear_ring(polygon.exterior)
-    holes = []
-    for hole in polygon.interiors:
-        holes.append(clean_linear_ring(hole))
-
-    return Polygon(exterior, holes=holes)
-
-def clean_multipolygon(multi: MultiPolygon) -> MultiPolygon:
-    if multi.geom_type != "MultiPolygon":
-        multi = MultiPolygon([multi])
-    polygons = []
-    for polygon in multi.geoms:
-        polygons.append(clean_polygon(polygon))
-
-    return MultiPolygon(polygons)
 
 class BaseGeometry:
     # Area we have calculated arcs for. Calculated by appending full circles.
@@ -118,17 +85,9 @@ class BaseGeometry:
     def path(self) -> List[Union[ArcData, LineData]]:
         return self.assembler.path
 
-    @path.setter
-    def path(self, value: List[Union[ArcData, LineData]]) -> None:
-        self.assembler.path = value
-
     @property
     def last_arc(self) -> Optional[ArcData]:
         return self.assembler.last_arc
-
-    @last_arc.setter
-    def last_arc(self, value: Optional[ArcData]) -> None:
-        self.assembler.last_arc = value
 
     @property
     def cut_area_total(self) -> Polygon:
@@ -193,9 +152,6 @@ class BaseGeometry:
     def _queue_arcs(self, new_arcs: List[ArcData]) -> None:
         self.assembler.queue_arcs(new_arcs)
 
-    def join_arcs(self, next_arc: ArcData) -> List[LineData]:
-        return self.assembler.join_arcs(next_arc)
-
     def _split_arcs(self, full_arcs: List[ArcData]) -> List[ArcData]:
         return split_arcs(full_arcs, self.calculated_area_total)
 
@@ -259,10 +215,6 @@ class Pocket(BaseGeometry):
             already_cut = Polygon()
         complete_pocket = already_cut.union(to_cut)
         to_cut = complete_pocket.difference(already_cut)
-
-        clean_multipolygon(to_cut)
-        clean_multipolygon(complete_pocket)
-        clean_multipolygon(already_cut)
 
         self.starting_cut_area = already_cut
         self.starting_radius = starting_radius
@@ -405,34 +357,6 @@ class Pocket(BaseGeometry):
     @property
     def loop_count(self) -> int:
         return self.path_planner.convergence_iterations
-
-    def _start_point_perimeter(
-            self, polygons: MultiPolygon, already_cut: Polygon, step: float) -> VoronoiCenters:
-        """
-        Recalculate the start point to be inside the cut area, adjacent to the perimeter.
-        """
-        starting_radius = self.starting_radius or step
-        voronoi = VoronoiCenters(polygons, preserve_edge=True)
-
-        perimiter_point = voronoi.start_point
-        assert perimiter_point is not None
-        voronoi_edge_index = voronoi.graph.vertex_to_edges[perimiter_point.coords[0]]
-        assert len(voronoi_edge_index) == 1
-        voronoi_edge = voronoi.graph.edges[voronoi_edge_index[0]]
-        cut_edge_section = already_cut.intersection(voronoi_edge)
-        if cut_edge_section.length > starting_radius * 2:
-            new_start_point = cut_edge_section.interpolate(0.5, normalized=True)
-
-            voronoi = VoronoiCenters(polygons, starting_point=new_start_point)
-        else:
-            # Can't fit starting_radius here.
-            # Look for widest point in already_cut area.
-            cut_voronoi = VoronoiCenters(already_cut, preserve_widest=True)
-            voronoi = VoronoiCenters(polygons, starting_point=cut_voronoi.start_point)
-            del cut_voronoi
-
-        return voronoi
-
 
 class EntryCircle(BaseGeometry):
     center: Point
