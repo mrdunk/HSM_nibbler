@@ -20,6 +20,7 @@ except ImportError:
 
 from shapely.geometry import MultiPolygon, Polygon  # type: ignore
 
+from hsm_nibble.arc_utils import LineData  # type: ignore
 from hsm_nibble.voronoi_centers import VoronoiCenters  # type: ignore
 
 class Display:
@@ -104,7 +105,7 @@ class Display:
                     y.append(point[1])
                 style = "solid"
                 colour = "black"
-                if type(entity).__name__ == "Line":
+                if isinstance(entity, LineData):
                     if str(entity.move_style) == "MoveStyle.RAPID_OUTSIDE":
                         colour = "purple"
                         style = "dotted"
