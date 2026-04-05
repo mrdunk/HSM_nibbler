@@ -60,6 +60,7 @@ class PathPlanner:
             dilated_polygon_boundaries: List,
             generate: bool = False,
             debug: bool = False,
+            calculated_area: Optional[Polygon] = None,
     ) -> None:
         self.voronoi = voronoi
         self.step = step
@@ -69,6 +70,11 @@ class PathPlanner:
         self.dilated_polygon_boundaries = dilated_polygon_boundaries
         self.generate = generate
         self.debug = debug
+
+        # Planning area: tracks full circles placed so far (distinct from
+        # assembler.cut_area_total, which tracks the actual output arcs and is
+        # also updated by join_arcs with buffered fan polygons).
+        self.calculated_area_total: Polygon = calculated_area if calculated_area is not None else Polygon()
 
         self.last_circle: Optional[ArcData] = None
         self.arc_fail_count: int = 0
@@ -250,8 +256,8 @@ class PathPlanner:
 
         Returns (best_distance, filtered_arcs).
         """
-        assert self.assembler.cut_area_total
-        assert self.assembler.cut_area_total.is_valid
+        assert self.calculated_area_total
+        assert self.calculated_area_total.is_valid
 
         controller = ProportionalController()
         best_distance, best_circle, hidden_at_start, iteration_count, backwards = \
@@ -261,7 +267,7 @@ class PathPlanner:
                 min_distance=min_distance,
                 step=self.step,
                 winding_dir=self.winding_dir,
-                calculated_area=self.assembler.cut_area_total,
+                calculated_area=self.calculated_area_total,
                 last_circle=self.last_circle,
                 distance_from_geom=self.voronoi.distance_from_geom,
                 max_dist=self.voronoi.max_dist,
@@ -287,8 +293,8 @@ class PathPlanner:
         assert best_circle is not None
         self.last_circle = best_circle
 
-        arcs = split_arcs([best_circle], self.assembler.cut_area_total)
-        self.assembler.cut_area_total = self.assembler.cut_area_total.union(
+        arcs = split_arcs([best_circle], self.calculated_area_total)
+        self.calculated_area_total = self.calculated_area_total.union(
             Polygon(best_circle.path))
 
         filtered_arcs = [arc for arc in arcs if self._filter_arc(arc)]

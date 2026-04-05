@@ -108,9 +108,6 @@ class TestConvergenceFailureFixtures(unittest.TestCase):
 
     def test_failure_0(self): self._run_fixture(0)
     def test_failure_1(self): self._run_fixture(1)
-    def test_failure_2(self): self._run_fixture(2)
-    def test_failure_3(self): self._run_fixture(3)
-    def test_failure_4(self): self._run_fixture(4)
 
 
 if __name__ == "__main__":

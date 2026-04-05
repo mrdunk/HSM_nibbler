@@ -290,6 +290,13 @@ class Pocket(BaseGeometry):
                 dy = self.path[0].start.y - self.start_point.y
                 self.starting_angle = math.atan2(dx, dy)
 
+        # Seed last_circle so the first arc is spaced correctly from centre.
+        # Compute the initial planning area before creating PathPlanner so it
+        # can be passed in and used consistently for arc fitting.
+        last_circle = create_circle(self.start_point, self.start_radius)
+        self.calculated_area_total = self.calculated_area_total.union(
+                Polygon(last_circle.path))
+
         # Create the planner that will drive the voronoi traversal.
         self.path_planner = PathPlanner(
             voronoi=self.voronoi,
@@ -300,13 +307,9 @@ class Pocket(BaseGeometry):
             dilated_polygon_boundaries=dilated_polygon_boundaries,
             generate=self.generate,
             debug=self.debug,
+            calculated_area=self.calculated_area_total,
         )
-
-        # Seed last_circle so the first arc is spaced correctly from centre.
-        last_circle = create_circle(self.start_point, self.start_radius)
         self.path_planner.last_circle = last_circle
-        self.calculated_area_total = self.calculated_area_total.union(
-                Polygon(last_circle.path))
 
     def calculate_path(self) -> None:
         """ Reset path and restart from beginning. """
