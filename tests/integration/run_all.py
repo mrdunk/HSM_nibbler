@@ -19,6 +19,7 @@ from shapely.geometry import Polygon  # type: ignore
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from hsm_nibble import dxf
 from hsm_nibble import geometry
+from hsm_nibble.arc_utils import ArcData
 
 
 break_count: int = 0
@@ -90,16 +91,14 @@ def test_file(filepath: str, overlap: float, winding: geometry.ArcDir) -> Result
     time_run -= time.time()
     
     polygon_remaining = toolpath.polygon
-    #center_circle = toolpath.start_point.buffer(toolpath.start_radius)
-    #polygon_remaining = polygon_remaining.difference(center_circle)
     for element in toolpath.path:
-        if type(element).__name__ == "Arc":
+        if isinstance(element, ArcData):
             polygon_remaining = polygon_remaining.difference(
                     element.path.buffer(overlap))
 
     polygon_area = round(toolpath.polygon.area, 4)
     uncut_area = round(polygon_remaining.area, 4)
-    uncut_ratio = round(polygon_remaining.area/polygon_area, 4)
+    uncut_ratio = round(polygon_remaining.area / polygon_area, 4)
 
     arc_count = len(toolpath.path)
     if arc_count:
