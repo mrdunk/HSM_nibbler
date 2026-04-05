@@ -25,6 +25,7 @@ from tabulate import tabulate
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from hsm_nibble import dxf
 from hsm_nibble import geometry
+from hsm_nibble.arc_utils import ArcData, LineData
 
 #import warnings
 #from shapely.errors import ShapelyDeprecationWarning
@@ -221,14 +222,14 @@ def test_file(
                 disjointed_path_count += 1
         last_element = element
 
-        if type(element).__name__ == "Arc":
+        if isinstance(element, ArcData):
             new_cut = element.path.buffer(overlap / 2)
             cut_area = cut_area.union(new_cut)
 
             if show_arcs:
                 combined_path.append(element.path)
 
-        if type(element).__name__ == "Line":
+        if isinstance(element, LineData):
             if element.move_style == geometry.MoveStyle.RAPID_INSIDE:
                 crash = element.path.buffer(overlap / 2).difference(cut_area)
                 crash_area_parts.append(crash)
