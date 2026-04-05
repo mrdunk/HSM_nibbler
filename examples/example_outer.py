@@ -26,7 +26,7 @@ from hsm_nibble import geometry
 def display_outline(shape, colour="blue"):
     """ Display the outline of the shape to be cut. """
     shapes = shape
-    if shapes.type != "MultiPolygon":
+    if shapes.geom_type != "MultiPolygon":
         shapes = MultiPolygon([shapes])
 
     for shape in shapes.geoms:

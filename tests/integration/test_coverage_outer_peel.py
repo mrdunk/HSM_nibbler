@@ -119,8 +119,8 @@ def draw(
 
     def polygon(poly: Polygon, colour: str, fill: bool = True, linewidth=1) -> None:
         """Draw a Shaplely Polygon on matplotlib.pyplot. """
-        if poly.type != "MultiPolygon":
-            if poly.type != "Polygon":
+        if poly.geom_type != "MultiPolygon":
+            if poly.geom_type != "Polygon":
                 return
             if len(poly.exterior.coords) < 3:
                 return
@@ -269,7 +269,7 @@ def test_file(
     crash_ratio = round(crash_area.area / toolpath.polygon.area, 4)
 
     eroded_crash_area = crash_area.buffer(-overlap / 20)
-    if eroded_crash_area.type == "Polygon":
+    if eroded_crash_area.geom_type == "Polygon":
         eroded_crash_area = MultiPolygon([eroded_crash_area])
     dangerous_crash_count = len(eroded_crash_area.geoms)
 

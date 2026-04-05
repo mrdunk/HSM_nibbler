@@ -30,7 +30,7 @@ def display_start_point(toolpath, colour="purple"):
 
 def display_outline(shapes, colour="blue"):
     """ Display the outline of the shape to be cut. """
-    if shapes.type != "MultiPolygon":
+    if shapes.geom_type != "MultiPolygon":
         shapes = MultiPolygon([shapes])
     for shape in shapes.geoms:
         x, y = shape.exterior.xy
