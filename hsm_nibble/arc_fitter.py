@@ -157,6 +157,23 @@ def find_best_arc_distance(
             last_circle and return empty arcs without advancing.
         iteration_count: Number of bisection iterations used.
         backwards: Always False (bisection cannot move backward).
+
+    Spacing metric (why not circle centres):
+        Each proposed arc is clipped to its visible portion — the part that
+        extends into uncut material — because other Voronoi branches may have
+        already cleared part of the full circle. A foreign branch can clear any
+        portion of the arc regardless of where its centre lies relative to ours.
+
+        A centre-to-centre distance formula implicitly assumes both arcs are
+        full circles and measures to their theoretical far edges. This is wrong:
+        it returns "correct" spacing even when the actual visible cutting is a
+        small sliver nowhere near the far edge.
+
+        Hausdorff distance from last_circle's centre to the visible arc segment
+        measures how far the farthest visible arc point extends past
+        last_circle's edge — i.e., how far the tool actually cuts beyond the
+        previous pass. This correctly accounts for arbitrary foreign-branch
+        clipping.
     """
     # ------------------------------------------------------------------
     # Case 1: start of a new voronoi branch — place at edge start.
