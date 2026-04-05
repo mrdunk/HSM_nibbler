@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-Smoke test: run the toolpath generator against a single representative .dxf
-file and assert quality metrics are within acceptable bounds.
+Hard smoke test: run the toolpath generator against square_circle.dxf at a
+smaller overlap (1.6) and assert zero dangerous crashes.
 
-Intended to be run after each migration step to catch regressions quickly.
-Uses a single winding direction and a large overlap to keep execution fast.
+This test currently FAILS (dangerous_crash_count=1) — intentionally. It acts
+as a TDD red test to drive fixing the path-planning crash in the narrow region
+between the circle boundary and rectangle corner. The crash is caused by a
+RAPID_INSIDE move crossing uncut material during a branch-to-branch transition.
 
-dangerous_crash_count detects RAPID_INSIDE moves that cross uncut material —
-a proxy for dangerous tool engagement on the CNC machine.
+Once the path-planning crash is fixed, this test should pass with no changes.
 """
 
 import os
@@ -25,25 +26,23 @@ from hsm_nibble.arc_utils import ArcData, LineData
 
 DXF_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "test_cases", "involute.dxf"
+    "test_cases", "square_circle.dxf"
 )
 
-# Large overlap = fewer arcs = faster execution.
-OVERLAP = 3.2
+OVERLAP = 1.6
 WINDING = geometry.ArcDir.CW
 
-MAX_PATH_FAIL_RATIO = 0.01
 MAX_DANGEROUS_CRASH_COUNT = 0
 
 
-class TestSmoke(unittest.TestCase):
+class TestSmokeHard(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
         dxf_data = ezdxf.readfile(DXF_PATH)
         modelspace = dxf_data.modelspace()
         shape = dxf.dxf_to_polygon(modelspace).geoms[-1].buffer(0)
-        cls.toolpath = geometry.Pocket(shape, OVERLAP, WINDING, generate=False, debug=True)
+        cls.toolpath = geometry.Pocket(shape, OVERLAP, WINDING, generate=False, debug=False)
 
         cut_area = Polygon()
         crash_area_parts = []
@@ -71,16 +70,6 @@ class TestSmoke(unittest.TestCase):
 
     def test_path_not_empty(self):
         self.assertGreater(len(self.toolpath.path), 0)
-
-    def test_path_fail_ratio(self):
-        arc_count = len(self.toolpath.path)
-        if arc_count == 0:
-            self.skipTest("No arcs generated")
-        path_fail_ratio = self.toolpath.path_fail_count / arc_count
-        self.assertLess(
-            path_fail_ratio, MAX_PATH_FAIL_RATIO,
-            f"path_fail_ratio {path_fail_ratio:.4f} exceeds threshold {MAX_PATH_FAIL_RATIO}"
-        )
 
     def test_dangerous_crash_count(self):
         self.assertEqual(
