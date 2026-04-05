@@ -188,36 +188,40 @@ def find_best_arc_distance(
     #
     # lo=start_distance is always inside calculated_area (it's where the
     # previous arc was placed), so spacing there is 0 — no need to evaluate.
-    # hi starts at start_distance + 2*step and expands to the edge end if
-    # the arc at hi is hidden or spacing there is still below desired.
+    #
+    # hi is found by scanning forward in step increments until we reach a
+    # position where the arc is visible AND spacing >= desired. Expanding
+    # directly to edge_end risks non-monotone behaviour on long curved edges,
+    # where bisection would find a spurious far solution.
     # ------------------------------------------------------------------
     lo = start_distance
-    hi = min(start_distance + 2 * step, voronoi_edge.length)
-
-    sp_hi, _ = _hausdorff_spacing(
-        hi, voronoi_edge, winding_dir, calculated_area, last_circle,
-        distance_from_geom, max_dist)
-    _, hi_radius = arc_at_distance(hi, voronoi_edge, distance_from_geom)
-    desired_hi = _desired_step(hi_radius, step)
-
-    # Expand hi to edge end if arc at hi is hidden or spacing is still low.
-    if sp_hi is None or sp_hi < desired_hi:
-        hi = voronoi_edge.length
-        sp_hi, _ = _hausdorff_spacing(
-            hi, voronoi_edge, winding_dir, calculated_area, last_circle,
+    hi = None
+    for _n in range(2, _BISECT_ITERATIONS + 2):
+        hi_candidate = min(start_distance + _n * step, voronoi_edge.length)
+        sp_candidate, _ = _hausdorff_spacing(
+            hi_candidate, voronoi_edge, winding_dir, calculated_area, last_circle,
             distance_from_geom, max_dist)
-        _, hi_radius = arc_at_distance(hi, voronoi_edge, distance_from_geom)
-        desired_hi = _desired_step(hi_radius, step)
+        _, r_candidate = arc_at_distance(hi_candidate, voronoi_edge, distance_from_geom)
+        if sp_candidate is not None and sp_candidate >= _desired_step(r_candidate, step):
+            hi = hi_candidate
+            break
+        if hi_candidate >= voronoi_edge.length:
+            break
 
-    # If even the edge end can't reach desired spacing, place there and return.
-    if sp_hi is None or sp_hi < desired_hi:
+    # If no valid hi found, place at edge end and return.
+    if hi is None:
         pos, radius = arc_at_distance(voronoi_edge.length, voronoi_edge, distance_from_geom)
         circle = create_circle(pos, radius, winding_dir)
         hidden = not split_arcs([circle], calculated_area)
         return (voronoi_edge.length, circle, hidden, 1, False)
 
     # Bisect. Hidden arcs (sp_mid is None) are treated as spacing=0 → push lo up.
-    best_circle: Optional[ArcData] = None
+    # Track the closest match by |spacing - desired| regardless of direction —
+    # this handles convergence from below (sp just under desired) where the
+    # hi boundary is never updated and best_circle would otherwise be None.
+    best_circle = None
+    best_distance = hi
+    best_err = float('inf')
     count = 0
     for count in range(1, _BISECT_ITERATIONS + 1):
         mid = (lo + hi) / 2
@@ -231,20 +235,29 @@ def find_best_arc_distance(
 
         _, mid_radius = arc_at_distance(mid, voronoi_edge, distance_from_geom)
         desired = _desired_step(mid_radius, step)
+        err = abs(sp_mid - desired)
+
+        if err < best_err:
+            best_err = err
+            best_circle = circle
+            best_distance = mid
 
         if sp_mid < desired:
             lo = mid
         else:
             hi = mid
-            best_circle = circle
 
-        if abs(sp_mid - desired) < desired / _CONVERGE_FRACTION:
+        if err < desired / _CONVERGE_FRACTION:
             break
 
-    best_distance = min(hi, voronoi_edge.length)
     if best_circle is None:
-        pos, radius = arc_at_distance(best_distance, voronoi_edge, distance_from_geom)
-        best_circle = create_circle(pos, radius, winding_dir)
+        # All positions in [lo, hi] were hidden — advance by one step as a
+        # reference circle so the next call measures from start_distance+step.
+        ref_d = min(start_distance + step, voronoi_edge.length)
+        pos, radius = arc_at_distance(ref_d, voronoi_edge, distance_from_geom)
+        ref_circle = create_circle(pos, radius, winding_dir)
+        return (ref_d, ref_circle, True, count, False)
 
+    best_distance = min(best_distance, voronoi_edge.length)
     hidden = not split_arcs([best_circle], calculated_area)
     return (best_distance, best_circle, hidden, count, False)
