@@ -140,6 +140,7 @@ def find_best_arc_distance(
     best_progress: float = 0.0
     best_circle: Optional[ArcData] = None
     progress: float = 0.0
+    circle = None
 
     while count <= ITERATION_COUNT:
         count += 1
