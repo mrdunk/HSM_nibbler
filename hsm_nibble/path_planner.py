@@ -13,7 +13,7 @@ from hsm_nibble.arc_utils import (  # type: ignore
     filter_arc, split_arcs,
 )
 from hsm_nibble.arc_fitter import (  # type: ignore
-    ProportionalController, arc_at_distance, find_best_arc_distance,
+    arc_at_distance, find_best_arc_distance,
     ITERATION_COUNT,
 )
 from hsm_nibble.path_assembler import PathAssembler  # type: ignore
@@ -259,7 +259,6 @@ class PathPlanner:
         assert self.calculated_area_total
         assert self.calculated_area_total.is_valid
 
-        controller = ProportionalController()
         best_distance, best_circle, hidden_at_start, iteration_count, backwards = \
             find_best_arc_distance(
                 voronoi_edge=voronoi_edge,
@@ -271,7 +270,6 @@ class PathPlanner:
                 last_circle=self.last_circle,
                 distance_from_geom=self.voronoi.distance_from_geom,
                 max_dist=self.voronoi.max_dist,
-                controller=controller,
             )
 
         if hidden_at_start:

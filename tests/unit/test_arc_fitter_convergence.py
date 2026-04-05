@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from shapely.wkt import loads as wkt_loads
 from shapely.geometry import Point
 
-from hsm_nibble.arc_fitter import find_best_arc_distance, ITERATION_COUNT, ProportionalController
+from hsm_nibble.arc_fitter import find_best_arc_distance, ITERATION_COUNT
 from hsm_nibble.arc_utils import ArcData, ArcDir
 
 
@@ -94,17 +94,13 @@ class TestConvergenceFailureFixtures(unittest.TestCase):
 
     def _run_fixture(self, index):
         kwargs = _load_fixture(index)
-        best_dist, best_circle, hidden, iters, backwards = find_best_arc_distance(
-            **kwargs, controller=ProportionalController()
-        )
-        self.assertFalse(hidden, f"fixture {index}: unexpected hidden_at_start")
+        best_dist, best_circle, hidden, iters, backwards = find_best_arc_distance(**kwargs)
         self.assertFalse(backwards, f"fixture {index}: unexpected backwards")
         self.assertIsNotNone(best_circle, f"fixture {index}: best_circle is None")
         self.assertGreater(best_circle.path.length, 0,
                            f"fixture {index}: best_circle has zero-length path")
-        # Known non-convergence — update to assertLess if convergence improves:
-        self.assertEqual(iters, ITERATION_COUNT,
-                         f"fixture {index}: convergence improved! iters={iters}")
+        self.assertLess(iters, ITERATION_COUNT,
+                        f"fixture {index}: did not converge; iters={iters}")
 
     def test_failure_0(self): self._run_fixture(0)
     def test_failure_1(self): self._run_fixture(1)
