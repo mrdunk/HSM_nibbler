@@ -239,6 +239,9 @@ def test_file(
                 if show_arcs:
                     combined_rapids.append(element.path)
             elif element.move_style == geometry.MoveStyle.CUT:
+                new_cut = element.path.buffer(overlap / 2)
+                cut_area = cut_area.union(new_cut)
+
                 if show_arcs:
                     combined_path.append(element.path)
     crash_area = unary_union(crash_area_parts)
