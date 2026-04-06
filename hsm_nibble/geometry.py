@@ -440,7 +440,20 @@ class EntryCircle(BaseGeometry):
             new_arcs.append(new_arc)
             loop += 0.25  # 1/4 turn.
 
-        #self._queue_arcs(new_arcs)
+        # Add a 1/4-circle arc that starts exactly where the spiral's last arc
+        # ends, centred on the starting circle centre.  This bridges the gap
+        # between the spiral's outer edge and the starting circle perimeter
+        # without introducing a direction discontinuity at the join point.
+        if new_arcs:
+            last_end = Point(new_arcs[-1].path.coords[-1])
+            dx = last_end.x - self.center.x
+            dy = last_end.y - self.center.y
+            exit_angle = math.atan2(dx, dy)
+            exit_radius = self.center.distance(last_end)
+            span = math.pi / 2 if self.winding_dir == ArcDir.CW else -math.pi / 2
+            closing_arc = create_arc(self.center, exit_radius, exit_angle, span, self.winding_dir)
+            if closing_arc is not None:
+                new_arcs.append(closing_arc)
 
         sorted_arcs = self._split_arcs([a for a in new_arcs if a is not None])
         sorted_arcs = [a for a in [complete_arc(s) for s in sorted_arcs] if a is not None]
