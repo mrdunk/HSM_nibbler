@@ -346,10 +346,6 @@ class Pocket(BaseGeometry):
         self.done_generating()
 
     @property
-    def arc_fail_count(self) -> int:
-        return self.path_planner.arc_fail_count
-
-    @property
     def path_fail_count(self) -> int:
         return self.path_planner.stuck_edge_count
 

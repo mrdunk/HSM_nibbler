@@ -12,9 +12,8 @@ Assertions:
   - It returns a usable arc (not None, positive path length).
   - hidden_at_start and backwards are False (these are true convergence misses,
     not the hidden/backwards early-exit cases).
-  - iteration_count == ITERATION_COUNT — documents the known failure.
-    If this assertion starts failing it means convergence improved; update the
-    test to assertLess(iters, ITERATION_COUNT) and celebrate.
+  - iteration_count < ITERATION_COUNT — these fixtures previously hit the
+    iteration limit but now converge correctly.
 """
 
 import importlib

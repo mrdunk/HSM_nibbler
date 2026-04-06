@@ -14,7 +14,6 @@ from hsm_nibble.arc_utils import (  # type: ignore
 )
 from hsm_nibble.arc_fitter import (  # type: ignore
     arc_at_distance, find_best_arc_distance,
-    ITERATION_COUNT,
 )
 from hsm_nibble.path_assembler import PathAssembler  # type: ignore
 from hsm_nibble.voronoi_centers import VoronoiCenters  # type: ignore
@@ -77,7 +76,6 @@ class PathPlanner:
         self.calculated_area_total: Polygon = calculated_area if calculated_area is not None else Polygon()
 
         self.last_circle: Optional[ArcData] = None
-        self.arc_fail_count: int = 0
         self.stuck_edge_count: int = 0
         self.convergence_iterations: int = 0
         self.visited_edges: Set[int] = set()
@@ -135,7 +133,6 @@ class PathPlanner:
 
         assert not self.branch_starts
         log(f"convergence_iterations: {self.convergence_iterations}")
-        log(f"arc_fail_count: {self.arc_fail_count}")
         log(f"len(path): {len(self.assembler.path)}")
         log(f"stuck_edge_count: {self.stuck_edge_count}")
 
@@ -259,7 +256,7 @@ class PathPlanner:
         assert self.calculated_area_total
         assert self.calculated_area_total.is_valid
 
-        best_distance, best_circle, hidden_at_start, iteration_count, backwards = \
+        best_distance, best_circle, hidden_at_start, iteration_count, _backwards = \
             find_best_arc_distance(
                 voronoi_edge=voronoi_edge,
                 start_distance=start_distance,
@@ -275,16 +272,6 @@ class PathPlanner:
         if hidden_at_start:
             self.last_circle = best_circle
             return (best_distance, [])
-
-        if backwards:
-            return (voronoi_edge.length, [])
-
-        if iteration_count == ITERATION_COUNT and self.debug:
-            distance_remain = voronoi_edge.length - best_distance
-            self.arc_fail_count += 1
-            log("\tDid not find an arc that fits. "
-                "\tdistance remaining: "
-                f"{round(distance_remain, 3)}")
 
         self.convergence_iterations += iteration_count
 

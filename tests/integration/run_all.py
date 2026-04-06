@@ -32,8 +32,6 @@ Result = NamedTuple("Result", [
     ("uncut_ratio", float),
     ("arc_count", int),
     ("arc_attempt_ratio", float),
-    ("arc_fail_count", int),
-    ("arc_fail_ratio", float),
     ("path_fail_ratio", float),
     ("time_per_arc", float),
     ])
@@ -67,12 +65,6 @@ def describe():
     print("arc_attempt_ratio:")
     print("\tThe average number of arc calculations before arriving "
             "as an arc that fits. (Lower is better.)")
-    print("arc_fail_count:")
-    print("\tThe raw number of arcs where the convergence loop hit ITERATION_COUNT. "
-            "Companion to arc_fail_ratio.")
-    print("arc_fail_ratio:")
-    print("\tThe ratio of failed attempts to find an exact fit arc. "
-            "(Lower is better)")
     print("path_fail_ratio:")
     print("\tThe number of failures to draw any more arcs along a "
             "voronoi edge. Any number over 0 should be investigated. (Lower is better)")
@@ -105,16 +97,12 @@ def test_file(filepath: str, overlap: float, winding: geometry.ArcDir) -> Result
     uncut_ratio = round(polygon_remaining.area / polygon_area, 4)
 
     arc_count = len(toolpath.path)
-    arc_fail_count = toolpath.arc_fail_count
     if arc_count:
         arc_attempt_ratio = round(toolpath.loop_count / arc_count, 4)
-        arc_fail_ratio = round(arc_fail_count / arc_count, 4)
         path_fail_ratio = toolpath.path_fail_count / arc_count
         time_per_arc = round(-time_run / arc_count, 4)
     else:
         arc_attempt_ratio = "infinite"
-        arc_fail_count = 0
-        arc_fail_ratio = "infinite"
         path_fail_ratio = "infinite"
         time_per_arc = "infinite"
 
@@ -126,8 +114,6 @@ def test_file(filepath: str, overlap: float, winding: geometry.ArcDir) -> Result
             uncut_ratio,
             arc_count,
             arc_attempt_ratio,
-            arc_fail_count,
-            arc_fail_ratio,
             path_fail_ratio,
             time_per_arc,
             )
