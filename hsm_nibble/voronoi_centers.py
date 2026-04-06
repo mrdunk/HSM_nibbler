@@ -240,10 +240,10 @@ class VoronoiCenters:
                             geom_points.append(
                                 pv.RetrieveScaledPoint(cell_twin))
                         if cell.contains_segment:
-                            geom_edges.append(pv.RetriveScaledSegment(cell))
+                            geom_edges.append(pv.RetrieveScaledSegment(cell))
                         if cell_twin.contains_segment:
                             geom_edges.append(
-                                pv.RetriveScaledSegment(cell_twin))
+                                pv.RetrieveScaledSegment(cell_twin))
                         assert len(geom_edges) > 0
                         assert len(geom_points) + len(geom_edges) == 2
 
