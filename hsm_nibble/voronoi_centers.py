@@ -193,7 +193,7 @@ class VoronoiCenters:
                 elif point == prev_point:
                     continue
                 else:
-                    geom_primatives.append((prev_point, point))
+                    geom_primatives.append([prev_point, point])
                     prev_point = point
             assert prev_point == first_point  # This is a loop.
 
