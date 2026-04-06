@@ -25,6 +25,7 @@ class ArcDir(Enum):
     CW = 0
     CCW = 1
     CLOSEST = 2
+    Closest = 2  # Old API. Client code may be using this.
 
 class MoveStyle(Enum):
     RAPID_OUTSIDE = 0
