@@ -7,14 +7,15 @@ Visualise the difference between what Pocket.calculated_area_total tracks
 Layers drawn (bottom to top):
   orange  — calculated_area_total (what the planner thinks was cut)
   green   — actual cut area (arcs + CUT lines buffered by overlap/2)
+  red     — planned but not cut (orange minus green): gaps where the planner
+            over-estimated coverage, leaving real material uncut
   blue    — pocket outline
-  red     — starting circle outline
-
-Orange regions NOT covered by green reveal where the planner over-estimated
-the cut area, leaving real material uncut between arc passes.
+  purple  — starting circle outline (outline only)
+  black   — arc and CUT paths
 
 Usage:
     python3 tests/integration/show_area_diff.py test_cases/arcs.dxf --outdir /tmp/HSM
+    python3 tests/integration/show_area_diff.py test_cases/arcs.dxf --interactive
     python3 tests/integration/show_area_diff.py test_cases/*.dxf --overlap 1.6 --winding CW --outdir /tmp/HSM
 """
 
@@ -28,7 +29,6 @@ import matplotlib.patches as patches  # type: ignore
 import matplotlib.pyplot as plt  # type: ignore
 import numpy as np
 from shapely.geometry import MultiPolygon, Polygon  # type: ignore
-from shapely.ops import unary_union  # type: ignore
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from hsm_nibble import dxf, geometry
@@ -36,12 +36,14 @@ from hsm_nibble.arc_utils import ArcData, LineData
 
 
 def _draw_polygon(ax, poly, facecolor, edgecolor=None, alpha=1.0, linewidth=0.5, fill=True):
+    """Draw a Shapely Polygon/MultiPolygon onto ax. Returns list of added artists."""
+    artists = []
     if poly is None or poly.is_empty:
-        return
+        return artists
     if poly.geom_type == "Polygon":
         poly = MultiPolygon([poly])
     if poly.geom_type != "MultiPolygon":
-        return
+        return artists
     for geom in poly.geoms:
         if len(geom.exterior.coords) < 3:
             continue
@@ -51,18 +53,24 @@ def _draw_polygon(ax, poly, facecolor, edgecolor=None, alpha=1.0, linewidth=0.5,
                 facecolor=facecolor, edgecolor=edgecolor or facecolor,
                 alpha=alpha, linewidth=linewidth)
             ax.add_patch(patch)
+            artists.append(patch)
             for interior in geom.interiors:
                 hole = patches.Polygon(
                     np.array(interior.xy).T, facecolor="white", edgecolor="white",
                     linewidth=linewidth)
                 ax.add_patch(hole)
+                artists.append(hole)
         else:
-            ax.plot(*geom.exterior.xy, c=edgecolor or facecolor, linewidth=linewidth)
+            line, = ax.plot(*geom.exterior.xy, c=edgecolor or facecolor, linewidth=linewidth)
+            artists.append(line)
             for interior in geom.interiors:
-                ax.plot(*interior.xy, c=edgecolor or facecolor, linewidth=linewidth)
+                line, = ax.plot(*interior.xy, c=edgecolor or facecolor, linewidth=linewidth)
+                artists.append(line)
+    return artists
 
 
-def process(filepath, overlap, winding, outdir):
+def build_figure(filepath, overlap, winding):
+    """Compute toolpath and build a matplotlib figure. Returns (fig, layer_map)."""
     filename = os.path.basename(filepath)
     print(f"  {filename}  overlap={overlap}  winding={winding.name}")
 
@@ -83,41 +91,96 @@ def process(filepath, overlap, winding, outdir):
             actual_cut = actual_cut.union(element.path.buffer(overlap / 2))
             cut_paths.append(element.path)
 
-    planned_cut = toolpath.calculated_area_total
-
-    # Starting circle.
+    planned_cut = toolpath.path_planner.calculated_area_total
     start_circle = toolpath.voronoi.start_point.buffer(toolpath.start_radius)
 
-    fig, ax = plt.subplots(1, 1, dpi=300)
+    fig, ax = plt.subplots(1, 1, dpi=150)
 
-    # Layer 1: planned area (orange) — what the planner tracked.
-    _draw_polygon(ax, planned_cut, facecolor="orange", alpha=0.6)
+    layer_artists = {}
 
-    # Layer 2: actual cut area (green) — what the path really cuts.
-    _draw_polygon(ax, actual_cut, facecolor="green", alpha=0.6)
+    layer_artists["orange: planned"] = _draw_polygon(
+        ax, planned_cut, facecolor="orange", alpha=0.6)
 
-    # Layer 3: pocket outline (blue, no fill).
-    _draw_polygon(ax, toolpath.polygon, facecolor=None, edgecolor="blue",
-                  linewidth=0.3, fill=False)
+    layer_artists["green: actual cut"] = _draw_polygon(
+        ax, actual_cut, facecolor="green", alpha=0.6)
 
-    # Layer 4: starting circle outline (red, no fill).
-    _draw_polygon(ax, start_circle, facecolor=None, edgecolor="red",
-                  linewidth=0.5, fill=False)
+    gap = planned_cut.difference(actual_cut)
+    layer_artists["red: planned but not cut"] = _draw_polygon(
+        ax, gap, facecolor="red", alpha=0.8)
 
-    # Layer 5: arc and CUT paths (black lines).
+    layer_artists["blue: pocket outline"] = _draw_polygon(
+        ax, toolpath.polygon, facecolor=None, edgecolor="blue", linewidth=0.3, fill=False)
+
+    layer_artists["purple: start circle"] = _draw_polygon(
+        ax, start_circle, facecolor=None, edgecolor="purple", linewidth=0.5, fill=False)
+
+    arc_lines = []
     for path in cut_paths:
-        ax.plot(*path.xy, c="black", linewidth=0.15)
+        line, = ax.plot(*path.xy, c="black", linewidth=0.15)
+        arc_lines.append(line)
+    layer_artists["black: arcs/cuts"] = arc_lines
 
     ax.axis("equal")
+    ax.set_title(f"{filename}  overlap={overlap}  {winding.name}", fontsize=6)
+
+    return fig, ax, layer_artists, filename
+
+
+def show_interactive(filepath, overlap, winding):
+    """Open an interactive window with toggleable layers."""
+    fig, ax, layer_artists, _ = build_figure(filepath, overlap, winding)
+
+    # Build legend with one proxy per layer; map legend line → artist list.
+    proxy_lines = []
+    legend_to_artists = {}
+    for label, artists in layer_artists.items():
+        if not artists:
+            continue
+        colour = label.split(":")[0].strip()
+        proxy, = ax.plot([], [], color=colour, label=label, linewidth=4)
+        proxy_lines.append(proxy)
+        legend_to_artists[proxy] = artists
+
+    leg = ax.legend(loc="upper right", fontsize=6, framealpha=0.8)
+    leg.set_draggable(True)
+
+    # Make legend entries pickable and thicker so they're easy to click.
+    for legline in leg.get_lines():
+        legline.set_picker(8)
+        legline.set_linewidth(6)
+
+    # Map each legend line back to the matching proxy, then to the artists.
+    legline_to_artists = {}
+    for legline, proxy in zip(leg.get_lines(), proxy_lines):
+        legline_to_artists[legline] = legend_to_artists[proxy]
+
+    def on_pick(event):
+        artists = legline_to_artists.get(event.artist)
+        if artists is None:
+            return
+        visible = not artists[0].get_visible()
+        for artist in artists:
+            artist.set_visible(visible)
+        event.artist.set_alpha(1.0 if visible else 0.3)
+        fig.canvas.draw()
+
+    fig.canvas.mpl_connect("pick_event", on_pick)
+    plt.show()
+
+
+def save_to_file(filepath, overlap, winding, outdir):
+    """Render and save a PNG."""
+    fig, ax, layer_artists, filename = build_figure(filepath, overlap, winding)
+
     ax.set_title(
         f"{filename}  overlap={overlap}  {winding.name}\n"
-        "orange=planned  green=actual  red=start circle",
+        "orange=planned  green=actual  red=gap  purple=start circle",
         fontsize=4)
 
     os.makedirs(outdir, exist_ok=True)
     stem = os.path.splitext(filename)[0]
     out = os.path.join(outdir, f"{stem}_{overlap}_{winding.name}_area_diff.png")
-    plt.savefig(out, bbox_inches="tight")
+    plt.savefig(out, bbox_inches="tight", dpi=300)
     plt.close(fig)
     print(f"  saved: {out}")
 
@@ -131,27 +194,31 @@ def main():
                         help="Step/overlap distance (default 1.6)")
     parser.add_argument("--winding", choices=["CW", "CCW", "CLOSEST"], default="CW",
                         help="Winding direction (default CW)")
-    parser.add_argument("--outdir", required=True, metavar="DIR",
-                        help="Directory to write PNG images into")
-    args = parser.parse_args()
 
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--outdir", metavar="DIR",
+                      help="Save PNG images to this directory")
+    mode.add_argument("--interactive", action="store_true",
+                      help="Open an interactive window with toggleable layers "
+                           "(only the first matched file is shown)")
+
+    args = parser.parse_args()
     winding = geometry.ArcDir[args.winding]
 
-    filepaths = []
-    for pat in args.input_paths:
-        filepaths.extend(glob(pat))
-    filepaths = sorted(set(filepaths))
-
+    filepaths = sorted(set(fp for pat in args.input_paths for fp in glob(pat)))
     if not filepaths:
         print("No DXF files found.")
         sys.exit(1)
 
-    for fp in filepaths:
-        try:
-            process(fp, args.overlap, winding, args.outdir)
-        except Exception as exc:
-            print(f"  ERROR {fp}: {exc}")
-            raise
+    if args.interactive:
+        show_interactive(filepaths[0], args.overlap, winding)
+    else:
+        for fp in filepaths:
+            try:
+                save_to_file(fp, args.overlap, winding, args.outdir)
+            except Exception as exc:
+                print(f"  ERROR {fp}: {exc}")
+                raise
 
 
 if __name__ == "__main__":
