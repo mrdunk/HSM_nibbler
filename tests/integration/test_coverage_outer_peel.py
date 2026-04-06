@@ -340,7 +340,7 @@ def main():
                     print(error)
                     print(f"during: {filepath}\t{overlap}\t{winding}")
                     errors.append(Error(filepath, overlap, winding, error))
-                    raise error
+                    #raise error
 
                 if break_count:
                     break
