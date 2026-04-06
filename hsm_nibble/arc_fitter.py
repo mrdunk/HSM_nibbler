@@ -89,6 +89,34 @@ def _desired_step(radius: float, step: float) -> float:
     return step
 
 
+def _area_spacing(
+        d: float,
+        voronoi_edge: LineString,
+        winding_dir: ArcDir,
+        calculated_area: Polygon,
+        distance_from_geom: Callable[[Point], float],
+) -> Tuple[Optional[float], Optional[ArcData]]:
+    """
+    Return (spacing, circle) where spacing is the maximum distance from any
+    visible arc point to the already-cut area boundary, or None if the arc is
+    entirely hidden.
+
+    Used at the start of a new Voronoi branch (last_circle is None) to place
+    the first arc step away from the nearest already-cut boundary.
+    """
+    pos, radius = arc_at_distance(d, voronoi_edge, distance_from_geom)
+    circle = create_circle(pos, radius, winding_dir)
+    arcs = split_arcs([circle], calculated_area)
+    if not arcs:
+        return None, circle
+    spacing = max(
+        calculated_area.distance(Point(c))
+        for arc in arcs
+        for c in arc.path.coords
+    )
+    return spacing, circle
+
+
 def _hausdorff_spacing(
         d: float,
         voronoi_edge: LineString,
@@ -112,7 +140,7 @@ def _hausdorff_spacing(
     for arc in arcs:
         spacing = max(
             spacing,
-            last_circle.origin.hausdorff_distance(arc.path) - last_circle.radius)
+            last_circle.origin.hausdorff_distance(arc.path) - (last_circle.radius or 0))
     return abs(spacing), circle
 
 
@@ -176,19 +204,94 @@ def find_best_arc_distance(
         clipping.
     """
     # ------------------------------------------------------------------
-    # Case 1: start of a new voronoi branch — place at edge start.
+    # Case 1: start of a new voronoi branch.
+    #
+    # Bisect using _area_spacing so the first arc is placed step away from
+    # the nearest already-cut boundary.  When calculated_area is empty (very
+    # start of planning) place at edge start immediately.
     # ------------------------------------------------------------------
     if last_circle is None:
-        pos, radius = arc_at_distance(start_distance, voronoi_edge, distance_from_geom)
-        circle = create_circle(pos, radius, winding_dir)
-        if split_arcs([circle], calculated_area):
+        if calculated_area.is_empty:
+            pos, radius = arc_at_distance(start_distance, voronoi_edge, distance_from_geom)
+            circle = create_circle(pos, radius, winding_dir)
             return (start_distance, circle, False, 1, False)
-        # Edge start is inside already-cut area; advance by one step so the
-        # caller can move dist forward and try again with last_circle set.
-        d_next = min(start_distance + step, voronoi_edge.length)
-        pos, radius = arc_at_distance(d_next, voronoi_edge, distance_from_geom)
-        circle = create_circle(pos, radius, winding_dir)
-        return (d_next, circle, True, 1, False)
+
+        # Scan forward to find the first position where the arc is visible.
+        lo = None
+        for _n in range(0, _BISECT_ITERATIONS + 2):
+            d = min(start_distance + _n * step, voronoi_edge.length)
+            sp, _ = _area_spacing(d, voronoi_edge, winding_dir, calculated_area,
+                                  distance_from_geom)
+            if sp is not None:
+                lo = d
+                break
+            if d >= voronoi_edge.length:
+                break
+
+        if lo is None:
+            # Entire edge hidden — advance by one step as a reference circle.
+            ref_d = min(start_distance + step, voronoi_edge.length)
+            pos, radius = arc_at_distance(ref_d, voronoi_edge, distance_from_geom)
+            circle = create_circle(pos, radius, winding_dir)
+            return (ref_d, circle, True, 1, False)
+
+        sp_lo, circle_lo = _area_spacing(lo, voronoi_edge, winding_dir, calculated_area,
+                                         distance_from_geom)
+        if sp_lo is not None and sp_lo >= step:
+            # Already at or beyond the target — place here.
+            return (lo, circle_lo, False, 1, False)
+
+        # Scan further to find hi where area spacing >= step.
+        hi = None
+        for _n in range(1, _BISECT_ITERATIONS + 2):
+            d = min(lo + _n * step, voronoi_edge.length)
+            sp, _ = _area_spacing(d, voronoi_edge, winding_dir, calculated_area,
+                                  distance_from_geom)
+            if sp is not None and sp >= step:
+                hi = d
+                break
+            if d >= voronoi_edge.length:
+                break
+
+        if hi is None:
+            pos, radius = arc_at_distance(voronoi_edge.length, voronoi_edge, distance_from_geom)
+            circle = create_circle(pos, radius, winding_dir)
+            hidden = not split_arcs([circle], calculated_area)
+            return (voronoi_edge.length, circle, hidden, 1, False)
+
+        # Bisect between lo (sp < step) and hi (sp >= step).
+        best_circle = None
+        best_distance = hi
+        best_err = float('inf')
+        count = 0
+        for count in range(1, _BISECT_ITERATIONS + 1):
+            mid = (lo + hi) / 2
+            sp_mid, circle = _area_spacing(mid, voronoi_edge, winding_dir, calculated_area,
+                                           distance_from_geom)
+            if sp_mid is None:
+                lo = mid
+                continue
+            err = abs(sp_mid - step)
+            if err < best_err:
+                best_err = err
+                best_circle = circle
+                best_distance = mid
+            if sp_mid < step:
+                lo = mid
+            else:
+                hi = mid
+            if err < step / _CONVERGE_FRACTION:
+                break
+
+        if best_circle is None:
+            ref_d = min(start_distance + step, voronoi_edge.length)
+            pos, radius = arc_at_distance(ref_d, voronoi_edge, distance_from_geom)
+            circle = create_circle(pos, radius, winding_dir)
+            return (ref_d, circle, True, count, False)
+
+        best_distance = min(best_distance, voronoi_edge.length)
+        hidden = not split_arcs([best_circle], calculated_area)
+        return (best_distance, best_circle, hidden, count, False)
 
     # ------------------------------------------------------------------
     # Case 2: near end of edge — place at edge end.
