@@ -29,6 +29,8 @@ def split_line_by_poly(line: LineString, poly: Union[Polygon, MultiPolygon]) -> 
         poly = MultiPolygon([poly])
     rings = []
     for p in poly.geoms:
+        if not isinstance(p, Polygon):
+            continue
         rings.append(p.exterior)
         rings.extend(p.interiors)
     new_lines = []

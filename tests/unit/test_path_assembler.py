@@ -78,6 +78,20 @@ class TestSplitLineByPoly(unittest.TestCase):
         result = split_line_by_poly(line, poly)
         self.assertGreater(len(result.geoms), 1)
 
+    def test_non_polygon_geom_in_collection_does_not_raise(self):
+        """Non-Polygon sub-geometries (e.g. LineString) inside the poly arg are skipped.
+
+        Shapely boolean ops can return a GeometryCollection containing both
+        Polygons and LineStrings.  Previously this caused:
+          AttributeError: 'LineString' object has no attribute 'exterior'
+        """
+        from shapely.geometry import GeometryCollection
+        line = LineString([(0, 0), (10, 0)])
+        poly = Polygon([(3, -1), (5, -1), (5, 1), (3, 1)])
+        mixed = GeometryCollection([poly, LineString([(1, -1), (1, 1)])])
+        result = split_line_by_poly(line, mixed)
+        self.assertIsNotNone(result)
+
 
 # ---------------------------------------------------------------------------
 # PathAssembler construction
