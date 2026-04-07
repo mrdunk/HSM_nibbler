@@ -21,7 +21,7 @@ from shapely.wkt import dumps as wkt_dumps
 
 import hsm_nibble.arc_fitter as arc_fitter_module
 from hsm_nibble.arc_fitter import find_best_arc_distance as _real_find_best_arc_distance
-from hsm_nibble.arc_fitter import ITERATION_COUNT
+from hsm_nibble.arc_fitter import _BISECT_ITERATIONS
 from hsm_nibble import dxf
 from hsm_nibble import geometry
 
@@ -53,7 +53,7 @@ def _capturing_find_best_arc_distance(
         controller=controller,
     )
     _, _, _, iteration_count, _ = result
-    if iteration_count == ITERATION_COUNT:
+    if iteration_count >= _BISECT_ITERATIONS:
         _captured.append(dict(
             voronoi_edge=voronoi_edge,
             start_distance=start_distance,
