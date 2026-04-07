@@ -12,6 +12,7 @@ Layers drawn (bottom to top):
   blue    — pocket outline
   purple  — starting circle outline (outline only)
   black   — arc and CUT paths
+  cyan    — rapid moves (RAPID_INSIDE and RAPID_OUTSIDE)
 
 Usage:
     python3 tests/integration/show_area_diff.py test_cases/arcs.dxf --outdir /tmp/HSM
@@ -80,9 +81,10 @@ def build_figure(filepath, overlap, winding):
 
     toolpath = geometry.Pocket(shape, overlap, winding, generate=False, debug=False)
 
-    # Compute what the path actually cuts; collect arc/CUT paths for drawing.
+    # Compute what the path actually cuts; collect arc/CUT and rapid paths for drawing.
     actual_cut = Polygon()
     cut_paths = []
+    rapid_paths = []
     for element in toolpath.path:
         if isinstance(element, ArcData):
             actual_cut = actual_cut.union(element.path.buffer(overlap / 2))
@@ -90,6 +92,8 @@ def build_figure(filepath, overlap, winding):
         elif isinstance(element, LineData) and element.move_style == geometry.MoveStyle.CUT:
             actual_cut = actual_cut.union(element.path.buffer(overlap / 2))
             cut_paths.append(element.path)
+        elif isinstance(element, LineData):
+            rapid_paths.append(element.path)
 
     planned_cut = toolpath.path_planner.calculated_area_total
     start_circle = toolpath.voronoi.start_point.buffer(toolpath.start_radius)
@@ -119,6 +123,12 @@ def build_figure(filepath, overlap, winding):
         line, = ax.plot(*path.xy, c="black", linewidth=0.15)
         arc_lines.append(line)
     layer_artists["black: arcs/cuts"] = arc_lines
+
+    rapid_lines = []
+    for path in rapid_paths:
+        line, = ax.plot(*path.xy, c="cyan", linewidth=0.2, linestyle="--")
+        rapid_lines.append(line)
+    layer_artists["cyan: rapids"] = rapid_lines
 
     ax.axis("equal")
     ax.set_title(f"{filename}  overlap={overlap}  {winding.name}", fontsize=6)
@@ -174,7 +184,7 @@ def save_to_file(filepath, overlap, winding, outdir):
 
     ax.set_title(
         f"{filename}  overlap={overlap}  {winding.name}\n"
-        "orange=planned  green=actual  red=gap  purple=start circle",
+        "orange=planned  green=actual  red=gap  purple=start circle  cyan=rapids",
         fontsize=4)
 
     os.makedirs(outdir, exist_ok=True)

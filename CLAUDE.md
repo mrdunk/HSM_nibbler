@@ -30,8 +30,8 @@ python3 -m unittest tests/integration/test_smoke.py tests/integration/test_smoke
 
 **Run integration/coverage tests** (slower, runs against all `.dxf` test cases):
 ```
-python3 -m unittest tests/integration/test_coverage.py
-python3 -m unittest tests/integration/test_coverage_outer_peel.py
+python3 tests/integration/test_coverage.py
+python3 tests/integration/test_coverage_outer_peel.py
 ```
 
 **Type checking:**

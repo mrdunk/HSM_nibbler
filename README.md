@@ -174,8 +174,8 @@ much of the pocket area is actually cut. These tests catch regressions in
 coverage quality but take significantly longer:
 
 ```
-python3 -m unittest tests/integration/test_coverage.py
-python3 -m unittest tests/integration/test_coverage_outer_peel.py
+python3 tests/integration/test_coverage.py
+python3 tests/integration/test_coverage_outer_peel.py
 ```
 
 ### Convergence regression fixtures (`tests/unit/test_arc_fitter_convergence.py`)
