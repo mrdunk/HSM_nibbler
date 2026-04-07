@@ -33,6 +33,7 @@ Result = NamedTuple("Result", [
     ("arc_count", int),
     ("arc_attempt_ratio", float),
     ("path_fail_ratio", float),
+    ("total_time", float),
     ("time_per_arc", float),
     ])
 
@@ -68,6 +69,9 @@ def describe():
     print("path_fail_ratio:")
     print("\tThe number of failures to draw any more arcs along a "
             "voronoi edge. Any number over 0 should be investigated. (Lower is better)")
+    print("total_time:")
+    print("\tThe total time taken to calculate the toolpath in seconds. "
+            "(Lower is better)")
     print("time_per_arc:")
     print("\tThe average time taken to calculate an arc position. "
             "(Lower is better)")
@@ -97,6 +101,7 @@ def test_file(filepath: str, overlap: float, winding: geometry.ArcDir) -> Result
     uncut_ratio = round(polygon_remaining.area / polygon_area, 4)
 
     arc_count = len(toolpath.path)
+    total_time = round(-time_run, 4)
     if arc_count:
         arc_attempt_ratio = round(toolpath.loop_count / arc_count, 4)
         path_fail_ratio = toolpath.path_fail_count / arc_count
@@ -115,6 +120,7 @@ def test_file(filepath: str, overlap: float, winding: geometry.ArcDir) -> Result
             arc_count,
             arc_attempt_ratio,
             path_fail_ratio,
+            total_time,
             time_per_arc,
             )
 
