@@ -17,6 +17,8 @@ classifiers = [
     "Operating System :: OS Independent",
     "Topic :: Scientific/Engineering"
 ]
+license = "GNU"
+license-files = ["LICENSE"]
 
 [project.urls]
 "Homepage" = "https://github.com/mrdunk/HSM_nibbler"
