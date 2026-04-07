@@ -4,3 +4,4 @@ __pycache__/
 *.dxf~
 venv/
 .vscode/
+API_TOKEN
