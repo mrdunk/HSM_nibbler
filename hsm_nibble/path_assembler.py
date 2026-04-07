@@ -201,24 +201,21 @@ class PathAssembler:
 
             remaining_path = LineString([self.last_arc.end, split_for_last])
 
-            split_path = split_line_by_poly(remaining_path, self.cut_area_total)
-
-            for part in split_path.geoms:
-                assert part.geom_type == "LineString"
-                assert len(part.coords) == 2
-
+            sweep = remaining_path.buffer(self.step / 2)
+            crash = sweep.difference(self.cut_area_total)
+            if crash.area / sweep.area <= 0.05:
+                move_style = MoveStyle.RAPID_INSIDE
+            else:
                 move_style = MoveStyle.CUT
-                if part.intersection(self.cut_area_total).length > part.length - self.step / 20:
-                    move_style = MoveStyle.RAPID_INSIDE
 
-                line = LineData(
-                        Point(part.coords[0]),
-                        Point(part.coords[-1]),
-                        part,
-                        move_style,)
+            line = LineData(
+                    Point(remaining_path.coords[0]),
+                    Point(remaining_path.coords[-1]),
+                    remaining_path,
+                    move_style,)
 
-                if line.path.length > SHORTEST_RAPID:
-                    lines.append(line)
+            if line.path.length > SHORTEST_RAPID:
+                lines.append(line)
             lines.append(last_line)
         else:
             move_style = MoveStyle.RAPID_OUTSIDE
