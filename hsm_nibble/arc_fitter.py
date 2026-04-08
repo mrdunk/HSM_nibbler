@@ -95,7 +95,7 @@ def _area_spacing(
         winding_dir: ArcDir,
         calculated_area: Polygon,
         distance_from_geom: Callable[[Point], float],
-) -> Tuple[Optional[float], Optional[ArcData]]:
+) -> Tuple[Optional[float], ArcData]:
     """
     Return (spacing, circle) where spacing is the maximum distance from any
     visible arc point to the already-cut area boundary, or None if the arc is
@@ -125,7 +125,7 @@ def _hausdorff_spacing(
         last_circle: ArcData,
         distance_from_geom: Callable[[Point], float],
         max_dist: float,
-) -> Tuple[Optional[float], Optional[ArcData]]:
+) -> Tuple[Optional[float], ArcData]:
     """
     Return (spacing, circle) where spacing is the Hausdorff-based step from
     last_circle to the visible arcs at distance d, or None if the arc is

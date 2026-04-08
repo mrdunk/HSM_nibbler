@@ -38,7 +38,8 @@ results = []
 
 Result = NamedTuple("Result", [
     ("filename", str),
-    ("overlap", float),
+    ("requested_overlap", float),
+    ("average_overlap", float),
     ("winding", geometry.ArcDir),
     ("cut_ratio", float),
     ("crash_ratio", float),
@@ -48,7 +49,7 @@ Result = NamedTuple("Result", [
 
 Error = NamedTuple("Error", [
     ("filename", str),
-    ("overlap", float),
+    ("requested_overlap", float),
     ("winding", geometry.ArcDir),
     ("message", str),
 ])
@@ -213,6 +214,7 @@ def test_file(
     crash_area_parts = []
 
     disjointed_path_count = 0
+    total_cut_length = 0.0
     last_element = None
     for element in toolpath.path:
         if last_element is not None:
@@ -225,6 +227,7 @@ def test_file(
         if isinstance(element, ArcData):
             new_cut = element.path.buffer(overlap / 2)
             cut_area = cut_area.union(new_cut)
+            total_cut_length += element.path.length
 
             if show_arcs:
                 combined_path.append(element.path)
@@ -241,6 +244,7 @@ def test_file(
             elif element.move_style == geometry.MoveStyle.CUT:
                 new_cut = element.path.buffer(overlap / 2)
                 cut_area = cut_area.union(new_cut)
+                total_cut_length += element.path.length
 
                 if show_arcs:
                     combined_path.append(element.path)
@@ -250,6 +254,7 @@ def test_file(
 
     cut_ratio = round(1.0 - uncut_area.area / toolpath.polygon.area, 4)
     crash_ratio = round(crash_area.area / toolpath.polygon.area, 4)
+    average_overlap = round(cut_area.area / total_cut_length, 4) if total_cut_length > 0 else 0.0
 
     eroded_crash_area = crash_area.buffer(-overlap / 20)
     if eroded_crash_area.geom_type == "Polygon":
@@ -273,6 +278,7 @@ def test_file(
     return Result(
         filename,
         overlap,
+        average_overlap,
         winding,
         cut_ratio,
         crash_ratio,

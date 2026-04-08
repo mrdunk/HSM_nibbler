@@ -73,7 +73,7 @@ def _draw_polygon(ax, poly, facecolor, edgecolor=None, alpha=1.0, linewidth=0.5,
 def build_figure(filepath, overlap, winding):
     """Compute toolpath and build a matplotlib figure. Returns (fig, layer_map)."""
     filename = os.path.basename(filepath)
-    print(f"  {filename}  overlap={overlap}  winding={winding.name}")
+    print(f"  {filename}  requested_overlap={overlap}  winding={winding.name}")
 
     dxf_data = ezdxf.readfile(filepath)
     modelspace = dxf_data.modelspace()
@@ -94,6 +94,9 @@ def build_figure(filepath, overlap, winding):
             cut_paths.append(element.path)
         elif isinstance(element, LineData):
             rapid_paths.append(element.path)
+
+    total_cut_length = sum(p.length for p in cut_paths)
+    average_overlap = actual_cut.area / total_cut_length if total_cut_length > 0 else 0.0
 
     planned_cut = toolpath.path_planner.calculated_area_total
     start_circle = toolpath.voronoi.start_point.buffer(toolpath.start_radius)
@@ -131,14 +134,14 @@ def build_figure(filepath, overlap, winding):
     layer_artists["cyan: rapids"] = rapid_lines
 
     ax.axis("equal")
-    ax.set_title(f"{filename}  overlap={overlap}  {winding.name}", fontsize=6)
+    ax.set_title(f"{filename}  requested_overlap={overlap}  average_overlap={average_overlap:.3f}  {winding.name}", fontsize=6)
 
-    return fig, ax, layer_artists, filename
+    return fig, ax, layer_artists, filename, average_overlap
 
 
 def show_interactive(filepath, overlap, winding):
     """Open an interactive window with toggleable layers."""
-    fig, ax, layer_artists, _ = build_figure(filepath, overlap, winding)
+    fig, ax, layer_artists, _, _ = build_figure(filepath, overlap, winding)
 
     # Build legend with one proxy per layer; map legend line → artist list.
     proxy_lines = []
@@ -180,10 +183,10 @@ def show_interactive(filepath, overlap, winding):
 
 def save_to_file(filepath, overlap, winding, outdir):
     """Render and save a PNG."""
-    fig, ax, layer_artists, filename = build_figure(filepath, overlap, winding)
+    fig, ax, layer_artists, filename, average_overlap = build_figure(filepath, overlap, winding)
 
     ax.set_title(
-        f"{filename}  overlap={overlap}  {winding.name}\n"
+        f"{filename}  requested_overlap={overlap}  average_overlap={average_overlap:.3f}  {winding.name}\n"
         "orange=planned  green=actual  red=gap  purple=start circle  cyan=rapids",
         fontsize=4)
 
