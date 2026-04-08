@@ -373,6 +373,52 @@ class TestSplitArcs(unittest.TestCase):
         self.assertEqual(result, [])
 
 
+class TestNoRepeatedPoints(unittest.TestCase):
+    """create_circle and create_arc must not produce paths with consecutive
+    duplicate coordinates — Shapely 2.0.7 warns (invalid value in
+    line_locate_point) when .project() is called on such a LineString."""
+
+    def _assert_no_dupes(self, path):
+        coords = list(path.coords)
+        for a, b in zip(coords, coords[1:]):
+            self.assertNotEqual(a, b, f"consecutive duplicate coord {a} in path")
+
+    def test_create_circle_no_duplicate_points(self):
+        circle = arc_utils.create_circle(Point(0, 0), 5.0, arc_utils.ArcDir.CW)
+        self._assert_no_dupes(circle.path)
+
+    def test_create_arc_full_circle_no_duplicate_points(self):
+        arc = arc_utils.create_arc(Point(0, 0), 5.0, 0, 2 * math.pi, arc_utils.ArcDir.CW)
+        self._assert_no_dupes(arc.path)
+
+    def test_create_arc_partial_no_duplicate_points(self):
+        arc = arc_utils.create_arc(Point(0, 0), 5.0, 0, math.pi, arc_utils.ArcDir.CW)
+        self._assert_no_dupes(arc.path)
+
+    def test_create_arc_partial_ccw_no_duplicate_points(self):
+        arc = arc_utils.create_arc(Point(0, 0), 5.0, 0, math.pi, arc_utils.ArcDir.CCW)
+        self._assert_no_dupes(arc.path)
+
+    def test_create_arc_from_path_strips_duplicates(self):
+        """create_arc_from_path (used by arcs_from_circle_diff) must strip
+        consecutive duplicate coords from geometry-operation output."""
+        p = (5.0, 0.0)
+        path_with_dupe = LineString([p, p, (4.0, 3.0), (0.0, 5.0)])
+        arc = arc_utils.create_arc_from_path(Point(0, 0), path_with_dupe, 5.0)
+        self._assert_no_dupes(arc.path)
+
+    def test_split_arcs_project_no_warning(self):
+        """split_arcs calls full_arc.path.project() — must not warn on circles
+        whose difference-derived sub-arcs have duplicate coords."""
+        import warnings
+        circle = arc_utils.create_circle(Point(0, 0), 5.0, arc_utils.ArcDir.CW)
+        # Partially overlapping cut forces arcs_from_circle_diff to run.
+        already_cut = Point(5.0, 0.0).buffer(1.0)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            arc_utils.split_arcs([circle], already_cut)  # must not raise
+
+
 class TestFilterArc(unittest.TestCase):
 
     def setUp(self):

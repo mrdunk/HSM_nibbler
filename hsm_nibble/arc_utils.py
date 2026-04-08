@@ -12,6 +12,7 @@ from typing import List, NamedTuple, Optional, Union
 from enum import Enum
 import math
 
+import shapely  # type: ignore
 from shapely.affinity import rotate  # type: ignore
 from shapely.geometry import LineString, MultiLineString, Point, Polygon  # type: ignore
 from shapely.ops import linemerge, split  # type: ignore
@@ -101,7 +102,7 @@ def create_arc(
     circle_path = origin.buffer(radius).boundary
     circle_path = split(circle_path, line_up)
     points = circle_path.geoms[1].coords[:] + circle_path.geoms[0].coords[:]
-    circle_path = LineString(points)
+    circle_path = shapely.remove_repeated_points(LineString(points))
 
     if abs(span_angle) == 2 * math.pi:
         return ArcData(
@@ -124,7 +125,8 @@ def create_arc(
     else:
         arc_path = split(circle_path, right_border).geoms[0]
 
-    arc_path = rotate(arc_path, -start_angle, origin=origin, use_radians=True)
+    arc_path = shapely.remove_repeated_points(
+        rotate(arc_path, -start_angle, origin=origin, use_radians=True))
     return ArcData(
             origin,
             radius,
@@ -147,6 +149,7 @@ def create_arc_from_path(
     """
     Save data for the arc sections of the path.
     """
+    path = shapely.remove_repeated_points(path)
     start = Point(path.coords[0])
     end = Point(path.coords[-1])
     start_angle = None
