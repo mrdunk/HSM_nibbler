@@ -18,7 +18,7 @@
 
     mrdunk@gmail.com
 """
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 import math
 
@@ -91,7 +91,7 @@ class VoronoiGraph:
                 vertices = self.edge_to_vertex[edge_i]
                 assert vertex in vertices
 
-    def store(self, edge: LineString | MultiLineString, replace_index: Optional[int] = None) -> None:
+    def store(self, edge: Union[LineString, MultiLineString], replace_index: Optional[int] = None) -> None:
         """Store a Voronoi edge and associated vertices in the internal data structures."""
         assert edge.geom_type == "LineString", f"linemerge failed: {edge}"
 
