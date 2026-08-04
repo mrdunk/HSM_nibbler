@@ -232,23 +232,34 @@ def complete_arc(
 
     start_coord = path.coords[0]
     end_coord = path.coords[-1]
-    mid = path.interpolate(0.5, normalized=True)
-
     # Breaking these out once rather than separately inline later saves us ~7%
     # CPU time overall.
     org_x, org_y = arc_data.origin.xy
     start_x, start_y = start_coord
-    mid_x, mid_y = mid.xy
     end_x, end_y = end_coord
 
     start_angle = math.atan2(start_x - org_x[0], start_y - org_y[0])
     end_angle = math.atan2(end_x - org_x[0], end_y - org_y[0])
-    mid_angle = math.atan2(mid_x[0] - org_x[0], mid_y[0] - org_y[0])
 
-    ds = (start_angle - mid_angle) % (2 * math.pi)
-    de = (mid_angle - end_angle) % (2 * math.pi)
-    if ((ds > 0 and de > 0 and winding_dir == ArcDir.CCW) or
-            (ds < 0 and de < 0 and winding_dir == ArcDir.CW)):
+    # Determine the direction encoded by the sampled path.  The old test used
+    # modulo-normalised angular differences and then checked whether they were
+    # negative.  A modulo 2*pi result is never negative, so CW paths were never
+    # reversed and CCW paths were always reversed.  Besides inverting some
+    # fillets, that could leave path length and span_angle describing different
+    # sweeps when ArcData was converted to G2/G3.
+    #
+    # Use the cross product of the first non-collinear pair of radial vectors.
+    # In the XY plane a positive cross product is CCW and a negative one is CW.
+    path_winding = None
+    start_dx = start_x - org_x[0]
+    start_dy = start_y - org_y[0]
+    for next_x, next_y in path.coords:
+        cross = start_dx * (next_y - org_y[0]) - start_dy * (next_x - org_x[0])
+        if not math.isclose(cross, 0.0, abs_tol=1e-12):
+            path_winding = ArcDir.CCW if cross > 0 else ArcDir.CW
+            break
+
+    if path_winding is not None and path_winding != winding_dir:
         # Needs reversed.
         path = LineString(path.coords[::-1])
         start_angle, end_angle = end_angle, start_angle
