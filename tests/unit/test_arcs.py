@@ -301,6 +301,39 @@ class TestCompleteArc(BaseTests):
         self.assertLess(result.span_angle, 0)
         self.verify_arc(result)
 
+    def test_reversal_when_ccw_path_requested_cw(self):
+        """Direction correction must work symmetrically for CCW input."""
+        origin = Point(0, 0)
+        radius = 5
+        arc = arc_utils.create_arc(
+            origin, radius, 0, -math.pi / 2, arc_utils.ArcDir.CCW)
+        original_start = arc.start
+        original_end = arc.end
+
+        result = arc_utils.complete_arc(arc, arc_utils.ArcDir.CW)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.start, original_end)
+        self.assertEqual(result.end, original_start)
+        self.assertEqual(result.winding_dir, arc_utils.ArcDir.CW)
+        self.assertGreater(result.span_angle, 0)
+        self.verify_arc(result)
+
+    def test_matching_ccw_path_is_not_reversed(self):
+        """A CCW path already matching the request must keep its short sweep."""
+        origin = Point(0, 0)
+        radius = 5
+        arc = arc_utils.create_arc(
+            origin, radius, 0, -math.pi / 2, arc_utils.ArcDir.CCW)
+
+        result = arc_utils.complete_arc(arc, arc_utils.ArcDir.CCW)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.start, arc.start)
+        self.assertEqual(result.end, arc.end)
+        self.assertAlmostEqual(result.span_angle, -math.pi / 2)
+        self.verify_arc(result)
+
 
 class TestArcsFromCircleDiff(unittest.TestCase):
 
@@ -471,4 +504,3 @@ class TestFilterArc(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
